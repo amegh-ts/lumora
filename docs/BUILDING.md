@@ -2,99 +2,90 @@
 
 ## Requirements
 
-- macOS 13 or later.
-- Swift 6 toolchain or Xcode Command Line Tools.
-- `iconutil` for app icon generation. It ships with Xcode Command Line Tools.
-- `plutil` for plist validation. It ships with macOS.
+- Apple Silicon Mac, Xcode Command Line Tools (Swift 6).
+- Homebrew packages used to build and link the LGPL stack:
 
-Xcode app is not required for the SwiftPM baseline. It is required only for the final native stack in `PLAN.md`.
+```bash
+brew install pkg-config meson ninja dav1d libass libplacebo luajit uchardet little-cms2 libbluray zimg
+```
 
-## Debug build
+`brew install mpv` is optional: it lets `swift build` work before you have run `Scripts/build-deps.sh`, but its GPL build must never ship.
+
+## 1. Build the LGPL libraries (once per version bump)
+
+```bash
+Scripts/build-deps.sh
+```
+
+Downloads pinned, checksum-verified sources of FFmpeg 9.1 and mpv 0.42.0, builds them without any GPL or
+nonfree parts into `.build/deps/prefix`, and unpacks Sparkle 2.10.1 into `.build/deps/sparkle`.
+The script fails if a GPL library ends up linked.
+
+## 2. Develop
 
 ```bash
 swift build
+.build/debug/Lumora
 ```
 
-Binary output is printed by:
+`Package.swift` links `.build/deps/prefix` when it exists and falls back to Homebrew's libmpv otherwise.
+
+DEBUG builds read these environment variables (see `Sources/LumoraApp/Support/DebugHarness.swift`):
+`LUMORA_OPEN`, `LUMORA_SNAPSHOT_DIR`, `LUMORA_SNAPSHOT_STEPS`, `LUMORA_MUTE`, `LUMORA_GL_PROBE`, `LUMORA_MPV_LOG`.
+
+## 3. App and DMG
 
 ```bash
-swift build --show-bin-path
+Scripts/make-dmg.sh
 ```
 
-## Release build
+Builds `dist/Lumora.app`, copies every non-system dylib plus `Sparkle.framework` into
+`Contents/Frameworks`, rewrites load paths to `@rpath`, signs, and creates `dist/Lumora-<version>.dmg`.
+The script refuses to run without the LGPL build unless `ALLOW_HOMEBREW_MPV=1` is set for a local-only test.
+
+### Signing and notarization
+
+Without arguments the app is ad-hoc signed: it runs on the Mac that built it, and other Macs need
+right-click → Open the first time.
+
+With a paid Apple Developer account:
+
+1. Create a **Developer ID Application** certificate in Xcode or on developer.apple.com.
+2. Store notarization credentials once (you will be asked for an app-specific password):
 
 ```bash
-swift build -c release --arch arm64
+xcrun notarytool store-credentials lumora-notary --apple-id <apple-id> --team-id <TEAMID>
 ```
 
-## App bundle
+3. Build, sign with the hardened runtime (`Resources/Lumora.entitlements`), notarize and staple:
 
 ```bash
-chmod +x Scripts/build-app.sh
-Scripts/build-app.sh
+SIGN_IDENTITY="Developer ID Application: <Name> (<TEAMID>)" NOTARY_PROFILE=lumora-notary Scripts/make-dmg.sh
 ```
 
-The script:
+## 4. Update feed (Sparkle)
 
-1. Builds the selected configuration and architecture.
-2. Creates `dist/Lumora.app`.
-3. Copies `Resources/Info.plist` and the release binary.
-4. Strips local symbols with `strip -x`.
-5. Validates `Info.plist` with `plutil`.
-6. Generates `AppIcon.icns` from `Scripts/make-icon.swift`.
-7. Prints bundle size with `du -sh`.
-
-Override defaults with environment variables:
+The app checks `https://github.com/amegh-ts/lumora/releases/latest/download/appcast.xml`.
+Updates are signed with an EdDSA key stored in the login Keychain under the account `lumora`
+(public key in `Resources/Info.plist` → `SUPublicEDKey`).
 
 ```bash
-CONFIGURATION=debug ARCH=x86_64 Scripts/build-app.sh
+Scripts/make-appcast.sh
 ```
 
-Current release bundle size is about 860K.
+signs the DMG and writes `dist/appcast.xml`. Upload both files to the GitHub release `v<version>`.
 
-## Bundle layout
-
-```text
-dist/Lumora.app/
-  Contents/
-    Info.plist
-    MacOS/
-      Lumora
-    Resources/
-      AppIcon.icns
-```
-
-`Resources/Info.plist` registers common video, audio, and subtitle extensions so Finder can open files with Lumora.
-
-## CI
-
-`.github/workflows/ci.yml` runs on `macos-latest`:
-
-1. Checks out the repository.
-2. Prints the Swift version.
-3. Runs `Scripts/build-app.sh`.
-4. Uploads `dist/Lumora.app` as an artifact.
-
-## Data locations
-
-Lumora writes runtime data to:
-
-```text
-~/Library/Application Support/Lumora/
-  settings.json
-  library.json
-  Thumbnails/
-  Subtitles/
-  Screenshots/
-  Logs/
-```
-
-## Verification
+Back up the private key — losing it means existing installs can't verify future updates:
 
 ```bash
-swift build
-Scripts/build-app.sh
-plutil -lint dist/Lumora.app/Contents/Info.plist
+.build/deps/sparkle/bin/generate_keys --account lumora -x lumora-sparkle-key.txt
 ```
 
-See [Troubleshooting](TROUBLESHOOTING.md) for toolchain warnings and optional tool failures.
+Keep that file somewhere safe and out of the repository.
+
+## Releasing
+
+1. Bump `CFBundleShortVersionString` and `CFBundleVersion` in `Resources/Info.plist`.
+2. Commit to `develop`, push, open a PR `develop` → `main` with release notes.
+3. After merging: `Scripts/make-dmg.sh`, `Scripts/make-appcast.sh`, tag `v<version>`, and create a GitHub
+   release with the notes, the DMG and `appcast.xml` attached.

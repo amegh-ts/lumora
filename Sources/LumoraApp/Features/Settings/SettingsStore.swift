@@ -25,7 +25,6 @@ final class SettingsStore: ObservableObject {
     @Published var ytDLPPath: String = "/opt/homebrew/bin/yt-dlp" { didSet { persist() } }
     @Published var ffmpegPath: String = "/opt/homebrew/bin/ffmpeg" { didSet { persist() } }
     @Published var checkForUpdates = true { didSet { persist() } }
-    @Published var updateFeedURL: String = "" { didSet { persist() } }
     @Published var hardwareDecoding = true { didSet { persist() } }
     @Published var equalizerGains: [Double] = Array(repeating: 0, count: 10) { didSet { persist() } }
     @Published var brightness: Double = 0 { didSet { persist() } }
@@ -49,7 +48,6 @@ final class SettingsStore: ObservableObject {
         var ytDLPPath: String = "/opt/homebrew/bin/yt-dlp"
         var ffmpegPath: String = "/opt/homebrew/bin/ffmpeg"
         var checkForUpdates = true
-        var updateFeedURL: String = ""
         var hardwareDecoding = true
         var equalizerGains: [Double] = Array(repeating: 0, count: 10)
         var brightness: Double = 0
@@ -80,7 +78,6 @@ final class SettingsStore: ObservableObject {
         ytDLPPath = snapshot.ytDLPPath
         ffmpegPath = snapshot.ffmpegPath
         checkForUpdates = snapshot.checkForUpdates
-        updateFeedURL = snapshot.updateFeedURL
         hardwareDecoding = snapshot.hardwareDecoding
         equalizerGains = snapshot.equalizerGains.count == 10 ? snapshot.equalizerGains : Array(repeating: 0, count: 10)
         brightness = snapshot.brightness
@@ -109,7 +106,6 @@ final class SettingsStore: ObservableObject {
             ytDLPPath: ytDLPPath,
             ffmpegPath: ffmpegPath,
             checkForUpdates: checkForUpdates,
-            updateFeedURL: updateFeedURL,
             hardwareDecoding: hardwareDecoding,
             equalizerGains: equalizerGains,
             brightness: brightness,

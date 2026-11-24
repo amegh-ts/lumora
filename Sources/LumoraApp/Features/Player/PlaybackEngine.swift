@@ -77,7 +77,8 @@ final class PlaybackEngine: ObservableObject {
             ("screenshot-directory", AppPaths.screenshots.path),
             ("ytdl", "yes"),
             ("ytdl-format", "bestvideo[height<=?2160]+bestaudio/best"),
-            ("script-opts", "ytdl_hook-ytdl_path=\(ytdlPath)"),
+            ("script-opts", "ytdl_hook-ytdl_path=\(Self.safeToolPath(ytdlPath, fallback: "yt-dlp"))"),
+            ("load-scripts", "no"),
             ("cache", "auto"),
             ("demuxer-max-bytes", "150MiB"),
             ("demuxer-max-back-bytes", "50MiB"),
@@ -318,6 +319,14 @@ final class PlaybackEngine: ObservableObject {
             ["screenshot-to-file", url.path, includeSubtitles ? "subtitles" : "video"],
             replyID: nextReplyID
         )
+    }
+
+    private static func safeToolPath(_ path: String, fallback: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("/"),
+              !trimmed.contains(","), !trimmed.contains("="),
+              FileManager.default.isExecutableFile(atPath: trimmed) else { return fallback }
+        return trimmed
     }
 
     private static func safeFilename(_ name: String) -> String {

@@ -29,6 +29,12 @@
 	<key>NSSupportsAutomaticTermination</key>
 	<true></true>
 	<key>NSSupportsSuddenTermination</key>
+	<false></false>
+	<key>SUFeedURL</key>
+	<string>https://github.com/amegh-ts/lumora/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>4/y5/mTg5oqm9MHLiH+u8Jh1eEt8UubW3v4VSXlOELU=</string>
+	<key>SUEnableAutomaticChecks</key>
 	<true></true>
 	<key>CFBundleDocumentTypes</key>
 	<array>
