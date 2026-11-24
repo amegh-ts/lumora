@@ -10,6 +10,10 @@ enum PlaylistImporter {
 
     static let fileExtensions: Set<String> = ["m3u", "m3u8", "pls"]
 
+    /// Network schemes a playlist entry may use. Anything else (mpv's lavfi://, edl://, memory://,
+    /// av://…) could make mpv generate or read data the user never chose, so it's dropped.
+    static let allowedSchemes: Set<String> = ["http", "https", "rtsp", "rtsps", "rtmp", "rtmps", "mms", "ftp", "smb", "udp", "rtp", "srt"]
+
     // MARK: Files
 
     /// Entries of a local playlist file, or nil when the file isn't a list of media (an HLS
@@ -72,11 +76,19 @@ enum PlaylistImporter {
     /// Absolute URLs stay as they are; paths (including Windows-style ones) are relative to the list.
     private static func resolve(_ text: String, base: URL) -> URL? {
         if text.contains("://") {
-            return URL(string: text) ?? text.addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed).flatMap(URL.init(string:))
+            let url = URL(string: text) ?? text.addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed).flatMap(URL.init(string:))
+            guard let url, let scheme = url.scheme?.lowercased() else { return nil }
+            if scheme == "file" {
+                return url.isFileURL ? url.standardizedFileURL : nil
+            }
+            return allowedSchemes.contains(scheme) ? url : nil
         }
         var path = text.replacingOccurrences(of: "\\", with: "/")
-        if path.hasPrefix("file:") {
-            return URL(string: path)
+        // Other "scheme:" forms (lavfi:, edl:, memory:, file: without slashes) aren't paths.
+        if let colon = path.firstIndex(of: ":"), path[..<colon].allSatisfy({ $0.isLetter || $0.isNumber || $0 == "+" || $0 == "-" || $0 == "." }),
+            path[..<colon].count > 1
+        {
+            return nil
         }
         if !path.hasPrefix("/") {
             path = base.appendingPathComponent(path).path
