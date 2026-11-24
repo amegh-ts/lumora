@@ -21,6 +21,7 @@ Lumora bundles the following libraries. Each is used as a separately linked dyna
 | Sparkle | MIT | https://github.com/sparkle-project/Sparkle |
 | shaderc | Apache 2.0 | https://github.com/google/shaderc |
 | Vulkan loader | Apache 2.0 | https://github.com/KhronosGroup/Vulkan-Loader |
+| MoltenVK | Apache 2.0 | https://github.com/KhronosGroup/MoltenVK |
 | GLib | LGPL 2.1 or later | https://gitlab.gnome.org/GNOME/glib |
 | gettext (libintl) | LGPL 2.1 or later | https://www.gnu.org/software/gettext/ |
 | Graphite2 | LGPL 2.1 or later / MPL 2.0 | https://github.com/silnrsi/graphite |

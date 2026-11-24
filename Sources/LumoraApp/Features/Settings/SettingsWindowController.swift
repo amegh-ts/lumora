@@ -11,7 +11,7 @@ private enum SettingsControlTag: Int {
     case contrast
     case saturation
     case hardwareDecoding
-    case equalizerStart
+    case renderer
     case checkForUpdates
     case subtitleSize
     case subtitleDelay
@@ -20,11 +20,9 @@ private enum SettingsControlTag: Int {
     case openSubtitlesAPIKey
     case ytDLPPath
     case ffmpegPath
-
-    static func equalizer(_ index: Int) -> SettingsControlTag {
-        SettingsControlTag(rawValue: equalizerStart.rawValue + index) ?? .equalizerStart
-    }
 }
+
+private let equalizerTagBase = 1000
 
 @MainActor
 final class SettingsWindowController: NSWindowController {
@@ -95,6 +93,12 @@ final class SettingsWindowController: NSWindowController {
             section("Basics"),
             row(label: "Volume", control: slider(tag: .volume, min: 0, max: 1, value: Double(settings.volume))),
             checkbox(title: "Hardware decoding", tag: .hardwareDecoding, value: settings.hardwareDecoding),
+            row(label: "Renderer", control: popup(
+                tag: .renderer,
+                titles: VideoRenderer.allCases.map(\.title),
+                selected: settings.renderer.title
+            )),
+            label("Renderer changes apply to new player windows."),
             section("Video adjustments"),
             row(label: "Brightness", control: slider(tag: .brightness, min: -1, max: 1, value: settings.brightness)),
             row(label: "Contrast", control: slider(tag: .contrast, min: 0, max: 2, value: settings.contrast)),
@@ -105,7 +109,7 @@ final class SettingsWindowController: NSWindowController {
         for (index, frequency) in frequencies.enumerated() {
             rows.append(row(
                 label: frequency,
-                control: slider(tag: .equalizer(index), min: -12, max: 12, value: settings.equalizerGains[index])
+                control: slider(rawTag: equalizerTagBase + index, min: -12, max: 12, value: settings.equalizerGains[index])
             ))
         }
         return pane(rows: rows)
@@ -187,6 +191,10 @@ final class SettingsWindowController: NSWindowController {
     }
 
     private func slider(tag: SettingsControlTag, min: Double, max: Double, value: Double) -> NSSlider {
+        slider(rawTag: tag.rawValue, min: min, max: max, value: value)
+    }
+
+    private func slider(rawTag: Int, min: Double, max: Double, value: Double) -> NSSlider {
         let control = NSSlider(frame: NSRect(x: 0, y: 0, width: 340, height: 20))
         control.minValue = min
         control.maxValue = max
@@ -194,7 +202,7 @@ final class SettingsWindowController: NSWindowController {
         control.isContinuous = true
         control.target = self
         control.action = #selector(controlChanged(_:))
-        control.tag = tag.rawValue
+        control.tag = rawTag
         return control
     }
 
@@ -223,6 +231,10 @@ final class SettingsWindowController: NSWindowController {
     }
 
     @objc private func controlChanged(_ sender: NSControl) {
+        if (equalizerTagBase..<equalizerTagBase + 10).contains(sender.tag) {
+            settings.equalizerGains[sender.tag - equalizerTagBase] = sender.doubleValue
+            return
+        }
         guard let tag = SettingsControlTag(rawValue: sender.tag) else { return }
         switch tag {
         case .remember: settings.rememberLastPosition = sender.integerValue == 1
@@ -239,7 +251,9 @@ final class SettingsWindowController: NSWindowController {
         case .contrast: settings.contrast = sender.doubleValue
         case .saturation: settings.saturation = sender.doubleValue
         case .hardwareDecoding: settings.hardwareDecoding = sender.integerValue == 1
-        case .equalizerStart: break
+        case .renderer:
+            let index = (sender as? NSPopUpButton)?.indexOfSelectedItem ?? 0
+            settings.renderer = VideoRenderer.allCases[index]
         case .checkForUpdates: settings.checkForUpdates = sender.integerValue == 1
         case .subtitleSize: settings.subtitleSize = sender.doubleValue
         case .subtitleDelay: settings.subtitleDelay = sender.doubleValue
@@ -248,11 +262,6 @@ final class SettingsWindowController: NSWindowController {
         case .openSubtitlesAPIKey: settings.openSubtitlesAPIKey = sender.stringValue
         case .ytDLPPath: settings.ytDLPPath = sender.stringValue
         case .ffmpegPath: settings.ffmpegPath = sender.stringValue
-        }
-        if tag.rawValue >= SettingsControlTag.equalizerStart.rawValue,
-           tag.rawValue < SettingsControlTag.equalizerStart.rawValue + 10 {
-            let index = tag.rawValue - SettingsControlTag.equalizerStart.rawValue
-            settings.equalizerGains[index] = sender.doubleValue
         }
     }
 }

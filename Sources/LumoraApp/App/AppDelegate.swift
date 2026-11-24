@@ -3,6 +3,7 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controllers: [MainWindowController] = []
+    private var quitObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppPaths.ensureDirectories()
@@ -36,11 +37,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         for controller in controllers {
             controller.close()
         }
         SettingsStore.shared.save()
+        guard PlaybackEngine.pendingShutdowns > 0 else { return .terminateNow }
+        quitObserver = NotificationCenter.default.addObserver(forName: .lumoraEnginesStopped, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.finishQuit() }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.finishQuit()
+        }
+        return .terminateLater
+    }
+
+    private func finishQuit() {
+        guard let quitObserver else { return }
+        NotificationCenter.default.removeObserver(quitObserver)
+        self.quitObserver = nil
+        NSApp.reply(toApplicationShouldTerminate: true)
     }
 
     private func newController() -> MainWindowController {

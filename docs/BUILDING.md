@@ -6,7 +6,7 @@
 - Homebrew packages used to build and link the LGPL stack:
 
 ```bash
-brew install pkg-config meson ninja dav1d libass libplacebo luajit uchardet little-cms2 libbluray zimg
+brew install pkg-config meson ninja dav1d libass libplacebo luajit uchardet little-cms2 libbluray zimg molten-vk vulkan-loader vulkan-headers
 ```
 
 `brew install mpv` is optional: it lets `swift build` work before you have run `Scripts/build-deps.sh`, but its GPL build must never ship.
@@ -20,6 +20,18 @@ Scripts/build-deps.sh
 Downloads pinned, checksum-verified sources of FFmpeg 9.1 and mpv 0.42.0, builds them without any GPL or
 nonfree parts into `.build/deps/prefix`, and unpacks Sparkle 2.10.1 into `.build/deps/sparkle`.
 The script fails if a GPL library ends up linked.
+
+### Video renderers
+
+- **Metal (default)**: mpv `vo=gpu-next` (libplacebo) with `gpu-context=macvk`, i.e. Vulkan on MoltenVK on Metal,
+  with HDR/EDR output. Upstream mpv can't embed this output in another app's view on macOS, so
+  `Scripts/patches/mpv-macvk-embed.py` (applied by `build-deps.sh`) lets the `wid` option name an `NSView` that mpv
+  draws into. The app bundles `libMoltenVK.dylib` and its ICD manifest in `Contents/Resources/vulkan/icd.d`.
+- **OpenGL**: the libmpv render API into a `CAOpenGLLayer`. Selectable in Settings → Playback → Renderer, and used
+  automatically if the Metal output fails to start (the player shows "Metal unavailable — using OpenGL").
+
+Because mpv's macOS video output synchronously hops to the main thread, the app never makes blocking libmpv calls
+from the main thread: property changes are asynchronous and `mpv_terminate_destroy` runs on a background queue.
 
 ## 2. Develop
 

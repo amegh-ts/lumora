@@ -6,8 +6,13 @@ enum MPV {
         mpv_set_option_string(handle, name, value)
     }
 
+    /// Asynchronous on purpose: mpv's macOS video output can block on the main thread, so a
+    /// synchronous property set from the main thread could deadlock.
     static func setProperty(_ handle: OpaquePointer, _ name: String, _ value: String) {
-        mpv_set_property_string(handle, name, value)
+        value.withCString { cValue in
+            var pointer: UnsafePointer<CChar>? = cValue
+            _ = mpv_set_property_async(handle, 0, name, MPV_FORMAT_STRING, &pointer)
+        }
     }
 
     static func string(_ handle: OpaquePointer, _ name: String) -> String? {

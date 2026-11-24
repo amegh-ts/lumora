@@ -21,7 +21,7 @@ enum DebugHarness {
         }
         if let quit = steps.max() {
             DispatchQueue.main.asyncAfter(deadline: .now() + quit + 1) {
-                NSApp.terminate(nil)
+                NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)
             }
         }
     }
@@ -33,6 +33,12 @@ enum DebugHarness {
             let engine = player.engine
             print("[debug] t=\(engine.currentTime) d=\(engine.duration) playing=\(engine.isPlaying) media=\(engine.hasMedia) size=\(engine.videoSize) audio=\(engine.audioTracks.map(\.displayName)) subs=\(engine.subtitleTracks.map(\.displayName)) chapters=\(engine.chapters.count) status=\(engine.statusMessage)")
         }
+        if let player = window.contentViewController as? PlayerViewController {
+            let shot = url.deletingPathExtension().path + "-vo.png"
+            MPV.command(player.engine.handle, ["screenshot-to-file", shot, "window"])
+            print("[debug] renderer=\(player.engine.renderer.rawValue) vo-shot=\(shot)")
+        }
+        print("[debug] menu=\(NSApp.mainMenu?.items.map(\.title) ?? []) appMenu=\(NSApp.mainMenu?.items.first?.submenu?.items.first?.title ?? "")")
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
         view.cacheDisplay(in: view.bounds, to: rep)
         try? rep.representation(using: .png, properties: [:])?.write(to: url)

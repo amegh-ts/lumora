@@ -16,7 +16,7 @@ jobs:
       - name: Swift version
         run: swift --version
       - name: Install build dependencies
-        run: brew install pkg-config meson ninja dav1d libass libplacebo luajit uchardet little-cms2 libbluray zimg
+        run: brew install pkg-config meson ninja dav1d libass libplacebo luajit uchardet little-cms2 libbluray zimg molten-vk vulkan-loader vulkan-headers
       - name: Build LGPL FFmpeg, libmpv and fetch Sparkle
         run: Scripts/build-deps.sh
       - name: Build app and DMG

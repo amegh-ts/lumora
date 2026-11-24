@@ -37,6 +37,24 @@ ditto "$SPARKLE" "$APP/Contents/Frameworks/Sparkle.framework"
 python3 "$ROOT/Scripts/bundle-dylibs.py" "$APP"
 cp "$ROOT/THIRD_PARTY_NOTICES.md" "$APP/Contents/Resources/"
 
+# MoltenVK is loaded at runtime by the Vulkan loader (Metal renderer), so bundle it with its ICD manifest.
+MOLTENVK="$(brew --prefix molten-vk)/lib/libMoltenVK.dylib"
+[[ -f "$MOLTENVK" ]] || { echo "error: MoltenVK missing — brew install molten-vk" >&2; exit 1; }
+cp "$MOLTENVK" "$APP/Contents/Frameworks/libMoltenVK.dylib"
+chmod 755 "$APP/Contents/Frameworks/libMoltenVK.dylib"
+install_name_tool -id "@rpath/libMoltenVK.dylib" "$APP/Contents/Frameworks/libMoltenVK.dylib"
+mkdir -p "$APP/Contents/Resources/vulkan/icd.d"
+cat > "$APP/Contents/Resources/vulkan/icd.d/MoltenVK_icd.json" <<'JSON'
+{
+    "file_format_version": "1.0.0",
+    "ICD": {
+        "library_path": "../../../Frameworks/libMoltenVK.dylib",
+        "api_version": "1.4.0",
+        "is_portability_driver": true
+    }
+}
+JSON
+
 BINARY="$APP/Contents/MacOS/Lumora"
 while read -r rpath; do
     case "$rpath" in
