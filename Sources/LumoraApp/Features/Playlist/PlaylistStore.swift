@@ -22,6 +22,12 @@ final class PlaylistStore: ObservableObject {
         }
     }
 
+    /// Replaces a link-style title once the real one is known (e.g. a YouTube video's name).
+    func rename(id: UUID, to title: String) {
+        guard let index = items.firstIndex(where: { $0.id == id }), items[index].title != title else { return }
+        items[index].title = title
+    }
+
     func clear() {
         shuffleHistory.removeAll()
         items.removeAll()

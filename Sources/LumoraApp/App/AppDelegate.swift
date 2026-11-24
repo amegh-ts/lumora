@@ -194,28 +194,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Updater.shared.checkForUpdates()
     }
 
-    @objc func showShortcuts(_ sender: Any?) {
-        let alert = NSAlert()
-        alert.messageText = "Keyboard Shortcuts"
-        alert.informativeText = """
-            Space or K — play / pause
-            ← / → — seek 10 s  (⇧ 3 s, ⌥ 60 s)
-            , / . — previous / next frame
-            [ / ] — slower / faster;  = — normal speed
-            L — A-B loop;  B — bookmark;  N or ⌘→ — next item
-            ↑ / ↓ — volume;  M — mute;  A — next audio track
-            - / ⇧= — audio earlier / later
-            T — next subtitle;  Z / X — subtitles earlier / later
-            ⌥⌘+ / ⌥⌘- — bigger / smaller subtitles
-            F or double-click — full screen;  Esc — exit
-            ⇧⌘S — screenshot;  ⌥⌘R — rotate
-            ⌥⌘M — mini player;  ⌥⌘T — keep on top
-            P — playlist;  ⇧⌘L — library;  ⌘U — open URL
-            Scroll — volume (vertical), seek (horizontal)
+    /// The standard About panel with a short description and links.
+    @objc func showAbout(_ sender: Any?) {
+        let credits = NSMutableAttributedString()
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.paragraphSpacing = 6
+        let body: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: paragraph
+        ]
+        credits.append(NSAttributedString(string: "A fast, lightweight video player for the Mac.\nPlays almost any file or stream.\n", attributes: body))
+        let links: [(String, String)] = [
+            ("Website and source", "https://github.com/amegh-ts/lumora"),
+            ("Report a problem", "https://github.com/amegh-ts/lumora/issues"),
+            ("Third-party licenses", "https://github.com/amegh-ts/lumora/blob/main/THIRD_PARTY_NOTICES.md")
+        ]
+        for (index, link) in links.enumerated() {
+            var attributes = body
+            attributes[.link] = URL(string: link.1)
+            credits.append(NSAttributedString(string: link.0, attributes: attributes))
+            if index < links.count - 1 {
+                credits.append(NSAttributedString(string: "  ·  ", attributes: body))
+            }
+        }
+        credits.append(NSAttributedString(string: "\n\nBuilt on mpv, FFmpeg and libplacebo (LGPL).", attributes: body))
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+        Self.activateApp()
+    }
 
-            Full list: Help → Lumora on GitHub → docs/KEYBOARD_SHORTCUTS.md
-            """
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+    @objc func showShortcuts(_ sender: Any?) {
+        KeyboardShortcutsWindowController.shared.showWindow(sender)
+        Self.activateApp()
     }
 }

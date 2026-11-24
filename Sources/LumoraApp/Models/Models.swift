@@ -213,6 +213,8 @@ struct SubtitleSearchResult: Identifiable, Hashable {
     var language: String
     var releaseName: String
     var fileID: Int
+    var downloads: Int = 0
+    var hearingImpaired = false
 }
 
 struct ConvertPreset: Identifiable, Hashable {

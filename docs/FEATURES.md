@@ -47,6 +47,13 @@
 - .m3u, .m3u8 and .pls files open as separate playlist items with their titles; HLS stream playlists still play as one stream.
 - YouTube playlist links (and videos opened from a playlist) load every video, up to 500, starting at the linked one.
 
+## Windows
+- Keyboard Shortcuts (⌘/): every shortcut in groups with key caps, searchable.
+- Library (⇧⌘L): All / In Progress / Watched, search, progress per item, right-click to play, show in Finder, copy link, mark watched or remove; Clear History.
+- Subtitle search: language picker, download counts, hearing-impaired marks, clear messages for a missing or rejected API key.
+- Convert Media: drop a file, pick a format with a plain description, choose where to save, cancel, show the result in Finder.
+- Open URL fills in a link from the clipboard and accepts links typed without https://.
+
 ## Updates
 - Automatic, signed updates through Sparkle from GitHub Releases.
 

@@ -40,6 +40,16 @@ enum DebugMode {
     enum DebugHarness {
         static func run(open: (([URL]) -> Void)) {
             let environment = ProcessInfo.processInfo.environment
+            // LUMORA_WINDOW_SHOTS=dir LUMORA_WINDOWS="showLibrary:,convertMedia:" → open each window
+            // through its app action and save a picture of it.
+            if let directory = environment["LUMORA_WINDOW_SHOTS"] {
+                captureWindows(
+                    to: URL(fileURLWithPath: directory),
+                    actions: (environment["LUMORA_WINDOWS"] ?? "showLibrary:,searchSubtitles:,convertMedia:,showShortcuts:").split(separator: ",").map(
+                        String.init),
+                    appearance: environment["LUMORA_APPEARANCE"])
+                return
+            }
             if let directory = environment["LUMORA_SETTINGS_SHOTS"] {
                 captureSettings(to: URL(fileURLWithPath: directory), appearance: environment["LUMORA_APPEARANCE"])
                 return
@@ -137,6 +147,40 @@ enum DebugMode {
                 DispatchQueue.main.asyncAfter(deadline: .now() + quit + 1) {
                     NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)
                 }
+            }
+        }
+
+        private static func captureWindows(to directory: URL, actions: [String], appearance: String?) {
+            if let appearance {
+                NSApp.appearance = NSAppearance(named: appearance == "light" ? .aqua : .darkAqua)
+            }
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            for (index, action) in actions.enumerated() {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1 + Double(index) * 1.5) {
+                    let before = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))
+                    NSApp.sendAction(Selector(action), to: nil, from: nil)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                        let opened = NSApp.windows.filter {
+                            $0.isVisible && !before.contains(ObjectIdentifier($0)) && !($0.windowController is MainWindowController)
+                        }
+                        let target =
+                            opened.first ?? NSApp.windows.first { $0.isVisible && $0.title.isEmpty == false && !($0.windowController is MainWindowController) }
+                        guard let window = target, let frameView = window.contentView?.superview,
+                            let rep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds)
+                        else {
+                            print("[debug] window \(action) not found")
+                            return
+                        }
+                        frameView.cacheDisplay(in: frameView.bounds, to: rep)
+                        let name = action.replacingOccurrences(of: ":", with: "")
+                        try? rep.representation(using: .png, properties: [:])?.write(to: directory.appendingPathComponent("\(index)-\(name).png"))
+                        print("[debug] window \(action) title=\(window.title) size=\(window.frame.size)")
+                        window.orderOut(nil)
+                    }
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2 + Double(actions.count) * 1.5) {
+                NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)
             }
         }
 

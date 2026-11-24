@@ -48,6 +48,24 @@ final class LibraryStore: ObservableObject {
         update(url: url, title: title, resumeTime: 0, duration: duration, watched: true)
     }
 
+    /// Marks an item watched or not without changing when it was last played.
+    func setWatched(url: URL, watched: Bool) {
+        guard var record = records[url.absoluteString] else { return }
+        record.watched = watched
+        if watched {
+            record.resumeTime = 0
+        }
+        records[record.id] = record
+        save()
+    }
+
+    /// Forgets every item (history, resume points and bookmarks).
+    func removeAll() {
+        guard !records.isEmpty else { return }
+        records = [:]
+        save()
+    }
+
     func remove(url: URL) {
         guard records.removeValue(forKey: url.absoluteString) != nil else { return }
         save()
@@ -103,6 +121,8 @@ final class LibraryStore: ObservableObject {
     /// Coalesces writes (progress is saved every few seconds while playing) and does the JSON
     /// encoding and disk write off the main thread.
     private func save() {
+        // Background test runs (LUMORA_BACKGROUND, DEBUG only) must not change the real library.
+        guard !DebugMode.background else { return }
         saveWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             self?.writeNow()
@@ -119,6 +139,7 @@ final class LibraryStore: ObservableObject {
     }
 
     private func writeNow(synchronously: Bool = false) {
+        guard !DebugMode.background else { return }
         var snapshot = Array(records.values)
         if snapshot.count > Self.maxRecords {
             snapshot.sort { $0.lastPlayed > $1.lastPlayed }
