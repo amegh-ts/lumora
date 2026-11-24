@@ -1,89 +1,55 @@
 # Lumora
 
-Fast, small macOS video player. Current build: Swift 6, AppKit, AVFoundation, SwiftPM.
+Fast, native macOS video player. Plays almost anything — MKV, MP4, WebM, AVI, HEVC, AV1, 10-bit, styled
+subtitles, multi-audio, chapters, network streams — with a clean, modern interface.
 
-Lumora opens local and network media with a compact AppKit player: playlist, subtitles, seek previews, library resume points, screenshots, converter presets, OpenSubtitles search, and update checks.
+Built with Swift and AppKit on an LGPL build of libmpv and FFmpeg, rendered with Metal (libplacebo `gpu-next`)
+and falling back to OpenGL when needed.
 
-## Status
+## Install
 
-Implementation tracker: [PROGRESS.md](PROGRESS.md)  
-Source plan: [PLAN.md](PLAN.md)
+1. Download the latest `Lumora-x.y.z.dmg` from [Releases](https://github.com/amegh-ts/lumora/releases/latest).
+2. Open it and drag **Lumora** into **Applications**.
+3. **First launch only:** Lumora isn't notarized by Apple yet, so macOS shows
+   *"Apple could not verify 'Lumora' is free of malware"*. Click **Done**, then open
+   **System Settings → Privacy & Security**, scroll down to the Lumora message and click **Open Anyway**.
 
-Current app is a working AVFoundation baseline. The final stack in `PLAN.md` still targets libmpv, FFmpeg, libplacebo, GRDB, Sparkle, and Sentry/PLCrashReporter.
+   Or, in Terminal:
 
-## Requirements
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Lumora.app
+   ```
 
-- macOS 13 or later.
-- Swift 6 toolchain or Xcode Command Line Tools.
-- Apple Silicon for the default `arm64` bundle. Override with `ARCH=x86_64` if needed.
-- Optional external tools:
-  - `yt-dlp` for YouTube links.
-  - `ffmpeg` for converter presets.
-  - OpenSubtitles API key for subtitle search and auto-download.
+After that Lumora opens normally and updates itself (Lumora → Check for Updates…). Updates are signed and
+verified before they're installed.
 
-## Quick start
-
-```bash
-chmod +x Scripts/build-app.sh
-Scripts/build-app.sh
-open dist/Lumora.app
-```
-
-Debug build:
-
-```bash
-swift build
-```
+Requirements: Apple Silicon Mac, macOS 27. YouTube links need [yt-dlp](https://github.com/yt-dlp/yt-dlp)
+(`brew install yt-dlp`).
 
 ## Features
 
-- Drag-and-drop and Finder open for media files.
-- Network URL and YouTube URL playback.
-- Play, pause, seek, volume, speed, frame step, A-B loop.
-- Audio and subtitle track selection.
-- SRT/VTT/ASS sidecar subtitles, embedded subtitles, subtitle delay, OpenSubtitles search.
-- Auto-hiding controls with hover thumbnails.
-- Playlist sidebar, shuffle, repeat, resume playback, bookmarks.
-- Library window with watched state and recent files.
-- Screenshots saved into Application Support.
-- Converter presets using an external `ffmpeg`.
-- Local crash logs and optional appcast update checks.
+- Hardware-accelerated decoding (VideoToolbox) of nearly every format; Metal rendering with HDR output.
+- Floating control bar that fades with the cursor, timeline with chapter marks and hover thumbnails.
+- Full ASS/SSA subtitle styling, sidecar auto-loading, drag-and-drop subtitles, delay and size, OpenSubtitles search.
+- Audio and subtitle track menus, speed 0.25×–4×, exact A-B loop, frame stepping, bookmarks, screenshots.
+- Fit / fill / stretch, rotate, mini player, keep on top, 10-band equalizer, brightness/contrast/saturation.
+- Playlist sidebar, resume playback, Continue Watching start screen.
+- HTTP, HLS and RTSP streams and YouTube links.
 
-## Documentation
+Keyboard shortcuts: Help → Keyboard Shortcuts, or [docs/KEYBOARD_SHORTCUTS.md](docs/KEYBOARD_SHORTCUTS.md).
 
-- [Building and packaging](docs/BUILDING.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Feature status](docs/FEATURES.md)
-- [Keyboard shortcuts](docs/KEYBOARD_SHORTCUTS.md)
-- [Settings reference](docs/SETTINGS.md)
-- [Troubleshooting](docs/TROUBLESHOOTING.md)
+## Build from source
 
-## Project layout
-
-```text
-Sources/LumoraApp/
-  App/          Application and window controllers
-  Features/     Player, playlist, library, subtitles, settings, tools
-  Models/       Shared value types
-  Support/      Paths, formatting, crash logging, notifications
-  main.swift    Entry point
-Resources/      App metadata and document type registration
-Scripts/        App bundle and icon generation
-docs/           Developer and user documentation
+```bash
+brew install pkg-config meson ninja dav1d libass libplacebo luajit uchardet little-cms2 libbluray zimg molten-vk vulkan-loader vulkan-headers
+Scripts/build-deps.sh     # LGPL FFmpeg + libmpv, Sparkle
+Scripts/make-dmg.sh       # dist/Lumora.app and dist/Lumora-<version>.dmg
 ```
 
-## Critical gap
+Details, signing and releasing: [docs/BUILDING.md](docs/BUILDING.md).
 
-Wide VLC/Elmedia-like format support is a release requirement. The current AVFoundation baseline does not meet it. The blocking next step is libmpv plus a custom LGPL FFmpeg build with VideoToolbox, then the test corpus from `PLAN.md`.
+## Project
 
-## Known limitations
-
-- No libmpv/FFmpeg/libplacebo pipeline; format coverage follows AVFoundation.
-- No SQLite/GRDB; settings and library use JSON.
-- No Sparkle or symbolic crash reporter; update checks are basic appcast polling and crash logs are local text files.
-- Chromecast, DLNA, full AirPlay transcoding, chapters, float-on-top, media keys, and Now Playing are not implemented.
-- PiP uses a runtime `AVPlayerView` selector and may be unavailable on some SDKs.
-
-## Third-party code
-
-No third-party code is bundled today. The final native stack requires an LGPL-only dependency policy before shipping; see `PLAN.md`.
+- Issues and roadmap: [GitHub Issues](https://github.com/amegh-ts/lumora/issues)
+- Plan: [PLAN.md](PLAN.md) · Progress log: [PROGRESS.md](PROGRESS.md)
+- Third-party licenses: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
