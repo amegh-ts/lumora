@@ -1,8 +1,13 @@
 name: CI
 
+# Before merge: every pull request is checked.
+# After merge: the merged result on main is built once more.
+# Pushes to develop and release tags don't start extra runs.
 on:
-  push:
   pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
