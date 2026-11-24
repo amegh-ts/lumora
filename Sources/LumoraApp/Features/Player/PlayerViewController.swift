@@ -230,8 +230,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             .store(in: &cancellables)
 
         engine.$audioTracks
-            .combineLatest(engine.$subtitleTracks)
-            .sink { [weak self] _, _ in self?.refreshControlState() }
+            .combineLatest(engine.$subtitleTracks, engine.$hasMedia)
+            // @Published fires before the new value is stored; read the engine after it lands.
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.refreshControlState() } }
             .store(in: &cancellables)
 
         engine.$videoSize
@@ -419,7 +420,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         let isFullscreen = view.window?.styleMask.contains(.fullScreen) ?? false
         controls.update(
             hasPlaylistNeighbours: playlist.items.count > 1,
-            hasTracks: !engine.audioTracks.isEmpty || !engine.subtitleTracks.isEmpty,
+            hasAudio: !engine.audioTracks.isEmpty,
+            hasMedia: engine.hasMedia,
             isFullscreen: isFullscreen
         )
     }
@@ -684,7 +686,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     private func menu(for kind: ControlsMenu) -> NSMenu {
         switch kind {
         case .speed: return speedMenu()
-        case .tracks: return tracksMenu()
+        case .audio: return audioMenu()
+        case .subtitles: return subtitlesMenu()
         case .more: return moreMenu()
         }
     }
@@ -702,9 +705,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         return menu
     }
 
-    private func tracksMenu() -> NSMenu {
+    private func audioMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addHeader("Audio")
+        menu.addHeader("Audio Track")
         if engine.audioTracks.isEmpty {
             menu.addItem(ClosureMenuItem("No audio", enabled: false) {})
         }
@@ -716,6 +719,18 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
                 })
         }
         menu.addItem(.separator())
+        let delay = NSMenuItem(title: "Audio Delay: \(String(format: "%+.1f", engine.audioDelay)) s", action: nil, keyEquivalent: "")
+        delay.submenu = delayMenu { [weak self] in self?.adjustAudioDelay($0) }
+        menu.addItem(delay)
+        menu.addItem(
+            ClosureMenuItem("Equalizer…") {
+                (NSApp.delegate as? AppDelegate)?.showAudioSettings(nil)
+            })
+        return menu
+    }
+
+    private func subtitlesMenu() -> NSMenu {
+        let menu = NSMenu()
         menu.addHeader("Subtitles")
         menu.addItem(
             ClosureMenuItem("Off", checked: engine.selectedSubtitleTrackID == nil) { [weak self] in
@@ -736,16 +751,21 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
                 SubtitleSearchWindowController.shared.showWindow(nil)
             })
         menu.addItem(.separator())
-        let delay = NSMenuItem(title: "Subtitle Delay: \(String(format: "%+.1f", settings.subtitleDelay)) s", action: nil, keyEquivalent: "")
-        let delayMenu = NSMenu()
-        delayMenu.addItem(ClosureMenuItem("Earlier by 0.1 s", key: "") { [weak self] in self?.adjustSubtitleDelay(-0.1) })
-        delayMenu.addItem(ClosureMenuItem("Later by 0.1 s") { [weak self] in self?.adjustSubtitleDelay(0.1) })
-        delayMenu.addItem(ClosureMenuItem("Earlier by 1 s") { [weak self] in self?.adjustSubtitleDelay(-1) })
-        delayMenu.addItem(ClosureMenuItem("Later by 1 s") { [weak self] in self?.adjustSubtitleDelay(1) })
-        delayMenu.addItem(.separator())
-        delayMenu.addItem(ClosureMenuItem("Reset") { [weak self] in self?.adjustSubtitleDelay(nil) })
-        delay.submenu = delayMenu
+        // The per-file delay lives in the engine; Settings only holds the default for new files.
+        let delay = NSMenuItem(title: "Subtitle Delay: \(String(format: "%+.1f", engine.subtitleDelay)) s", action: nil, keyEquivalent: "")
+        delay.submenu = delayMenu { [weak self] in self?.adjustSubtitleDelay($0) }
         menu.addItem(delay)
+        return menu
+    }
+
+    private func delayMenu(_ adjust: @escaping (TimeInterval?) -> Void) -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(ClosureMenuItem("Earlier by 0.1 s") { adjust(-0.1) })
+        menu.addItem(ClosureMenuItem("Later by 0.1 s") { adjust(0.1) })
+        menu.addItem(ClosureMenuItem("Earlier by 1 s") { adjust(-1) })
+        menu.addItem(ClosureMenuItem("Later by 1 s") { adjust(1) })
+        menu.addItem(.separator())
+        menu.addItem(ClosureMenuItem("Reset") { adjust(nil) })
         return menu
     }
 
@@ -833,9 +853,12 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         let speed = NSMenuItem(title: "Speed", action: nil, keyEquivalent: "")
         speed.submenu = speedMenu()
         menu.addItem(speed)
-        let tracks = NSMenuItem(title: "Audio & Subtitles", action: nil, keyEquivalent: "")
-        tracks.submenu = tracksMenu()
-        menu.addItem(tracks)
+        let audio = NSMenuItem(title: "Audio", action: nil, keyEquivalent: "")
+        audio.submenu = audioMenu()
+        menu.addItem(audio)
+        let subtitles = NSMenuItem(title: "Subtitles", action: nil, keyEquivalent: "")
+        subtitles.submenu = subtitlesMenu()
+        menu.addItem(subtitles)
         menu.addItem(.separator())
         for item in moreMenu().items {
             item.menu?.removeItem(item)

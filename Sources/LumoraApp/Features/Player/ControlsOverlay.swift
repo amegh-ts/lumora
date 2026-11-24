@@ -15,7 +15,8 @@ enum ControlsAction {
 
 enum ControlsMenu {
     case speed
-    case tracks
+    case audio
+    case subtitles
     case more
 }
 
@@ -37,7 +38,8 @@ final class ControlsOverlay: NSView {
     private let nextButton = HUDButton(symbol: "forward.end.fill", size: 13, diameter: 30, tooltip: "Next item")
     private let volumeButton = HUDButton(symbol: "speaker.wave.2.fill", size: 13, tooltip: "Mute")
     private let speedButton = HUDTextButton(title: "1×", tooltip: "Playback speed")
-    private let tracksButton = HUDButton(symbol: "captions.bubble", size: 14, tooltip: "Audio and subtitles")
+    private let audioButton = HUDButton(symbol: "waveform", size: 14, tooltip: "Audio")
+    private let subtitlesButton = HUDButton(symbol: "captions.bubble", size: 14, tooltip: "Subtitles")
     private let moreButton = HUDButton(symbol: "ellipsis.circle", size: 15, tooltip: "More")
     private let playlistButton = HUDButton(symbol: "sidebar.right", size: 14, tooltip: "Playlist")
     private let fullscreenButton = HUDButton(symbol: "arrow.up.left.and.arrow.down.right", size: 13, tooltip: "Full screen")
@@ -85,7 +87,7 @@ final class ControlsOverlay: NSView {
         leftGroup.spacing = 2
         let centerGroup = NSStackView(views: [previousButton, backButton, playButton, forwardButton, nextButton])
         centerGroup.spacing = 6
-        let rightGroup = NSStackView(views: [speedButton, tracksButton, moreButton, playlistButton, fullscreenButton])
+        let rightGroup = NSStackView(views: [speedButton, audioButton, subtitlesButton, moreButton, playlistButton, fullscreenButton])
         rightGroup.spacing = 2
         for group in [leftGroup, centerGroup, rightGroup] {
             group.orientation = .horizontal
@@ -133,7 +135,8 @@ final class ControlsOverlay: NSView {
         playlistButton.onClick = { [weak self] in self?.onAction?(.togglePlaylist) }
         fullscreenButton.onClick = { [weak self] in self?.onAction?(.toggleFullscreen) }
         speedButton.onClick = { [weak self] in self?.popMenu(.speed, from: self?.speedButton) }
-        tracksButton.onClick = { [weak self] in self?.popMenu(.tracks, from: self?.tracksButton) }
+        audioButton.onClick = { [weak self] in self?.popMenu(.audio, from: self?.audioButton) }
+        subtitlesButton.onClick = { [weak self] in self?.popMenu(.subtitles, from: self?.subtitlesButton) }
         moreButton.onClick = { [weak self] in self?.popMenu(.more, from: self?.moreButton) }
 
         timeline.onScrub = { [weak self] time, finished in
@@ -155,6 +158,7 @@ final class ControlsOverlay: NSView {
         nextButton.isHidden = width < 600 || !hasNeighbours
         volumeSlider.isHidden = width < 520
         speedButton.isHidden = width < 460
+        audioButton.isHidden = width < 430
         playlistButton.isHidden = width < 400
     }
 
@@ -221,13 +225,15 @@ final class ControlsOverlay: NSView {
         speedButton.setText(text)
     }
 
-    func update(hasPlaylistNeighbours: Bool, hasTracks: Bool, isFullscreen: Bool) {
+    func update(hasPlaylistNeighbours: Bool, hasAudio: Bool, hasMedia: Bool, isFullscreen: Bool) {
         // With a single item Previous/Next are hidden rather than shown disabled.
         if hasNeighbours != hasPlaylistNeighbours {
             hasNeighbours = hasPlaylistNeighbours
             needsLayout = true
         }
-        tracksButton.isEnabled = hasTracks
+        audioButton.isEnabled = hasAudio
+        // Subtitles stay available without embedded tracks: the menu adds files or searches online.
+        subtitlesButton.isEnabled = hasMedia
         fullscreenButton.setSymbol(
             isFullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
             size: 13
