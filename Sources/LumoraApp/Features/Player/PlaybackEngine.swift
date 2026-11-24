@@ -32,6 +32,17 @@ final class PlaybackEngine: ObservableObject {
     @Published private(set) var mediaTags: [String: String] = [:]
     /// False once loaded when the file has no picture at all (no video and no cover art).
     @Published private(set) var hasPicture = true
+    /// Output devices mpv can play to ("auto" first).
+    @Published private(set) var audioDevices: [(name: String, description: String)] = []
+    @Published private(set) var audioDevice = "auto"
+    @Published private(set) var deinterlace = "no"
+    /// Display shape forced by Aspect Ratio or Crop for the current file (width / height).
+    @Published private(set) var aspectOverride: Double?
+    @Published private(set) var cropAspect: Double?
+    /// 1 normally, 2 with volume boost on (mpv's volume 200).
+    private(set) var maxVolume: Float = 1
+    /// Decoded picture size before crop and aspect changes (crop is computed from this).
+    private var sourceSize: CGSize = .zero
     private var isFileLoaded = false
     private var isPartiallySeekable = false
     var isStream: Bool { currentItem.map { !$0.url.isFileURL } ?? false }
@@ -198,6 +209,11 @@ final class PlaybackEngine: ObservableObject {
         observe("demuxer-cache-state", MPV_FORMAT_NODE)
         observe("metadata", MPV_FORMAT_NODE)
         observe("partially-seekable", MPV_FORMAT_FLAG)
+        observe("width", MPV_FORMAT_INT64)
+        observe("height", MPV_FORMAT_INT64)
+        observe("audio-device-list", MPV_FORMAT_NODE)
+        observe("audio-device", MPV_FORMAT_STRING)
+        observe("deinterlace", MPV_FORMAT_STRING)
         observe("current-edition", MPV_FORMAT_INT64)
 
         mpv_request_log_messages(handle, "error")
@@ -358,6 +374,100 @@ final class PlaybackEngine: ObservableObject {
         setProperty("ab-loop-b", "no")
         setProperty("video-rotate", "0")
         setProperty("edition", "auto")
+        setProperty("video-aspect-override", "no")
+        setProperty("video-crop", "")
+        aspectOverride = nil
+        cropAspect = nil
+    }
+
+    // MARK: Picture shape
+
+    /// Forces the display aspect ratio (nil = the file's own).
+    func setAspectOverride(_ ratio: Double?) {
+        aspectOverride = ratio
+        setProperty("video-aspect-override", ratio.map { String(format: "%.4f", $0) } ?? "no")
+    }
+
+    /// Crops the centre of the picture to an aspect ratio, e.g. to remove black bars (nil = no crop).
+    func setCrop(aspect target: Double?) {
+        cropAspect = target
+        guard let target, sourceSize.width > 0, sourceSize.height > 0 else {
+            setProperty("video-crop", "")
+            return
+        }
+        let width = sourceSize.width
+        let height = sourceSize.height
+        var crop = CGRect(x: 0, y: 0, width: width, height: height)
+        if width / height > target {
+            crop.size.width = (height * target).rounded()
+            crop.origin.x = ((width - crop.width) / 2).rounded()
+        } else {
+            crop.size.height = (width / target).rounded()
+            crop.origin.y = ((height - crop.height) / 2).rounded()
+        }
+        setProperty("video-crop", "\(Int(crop.width))x\(Int(crop.height))+\(Int(crop.minX))+\(Int(crop.minY))")
+    }
+
+    /// The shape the picture is shown in after Aspect Ratio and Crop.
+    var displayAspect: Double? {
+        if let cropAspect { return cropAspect }
+        if let aspectOverride { return aspectOverride }
+        guard videoSize.width > 0, videoSize.height > 0 else { return nil }
+        return videoSize.width / videoSize.height
+    }
+
+    func setDeinterlace(_ mode: String) {
+        setProperty("deinterlace", mode)
+    }
+
+    // MARK: Audio output
+
+    func setAudioDevice(_ name: String) {
+        setProperty("audio-device", name)
+    }
+
+    /// Lets the volume go to 200% (software gain; may distort loud sources).
+    func setVolumeBoost(_ enabled: Bool) {
+        maxVolume = enabled ? 2 : 1
+        setProperty("volume-max", enabled ? "200" : "100")
+        if volume > maxVolume {
+            setVolume(maxVolume)
+        }
+    }
+
+    // MARK: Subtitle style
+
+    func setSubtitleStyle(font: String, color: String, background: SubtitleBackground, position: Double) {
+        setProperty("sub-font", font.isEmpty ? "sans-serif" : font)
+        setProperty("sub-color", color)
+        switch background {
+        case .outline:
+            setProperty("sub-border-style", "outline-and-shadow")
+            setProperty("sub-outline-color", "#000000")
+            setProperty("sub-outline-size", "2.5")
+            setProperty("sub-shadow-offset", "0")
+        case .shadow:
+            setProperty("sub-border-style", "outline-and-shadow")
+            setProperty("sub-outline-size", "0")
+            setProperty("sub-back-color", "#CC000000")
+            setProperty("sub-shadow-offset", "2.5")
+        case .box:
+            setProperty("sub-border-style", "opaque-box")
+            setProperty("sub-outline-color", "#B3000000")
+            setProperty("sub-outline-size", "6")
+            setProperty("sub-shadow-offset", "0")
+        }
+        setProperty("sub-pos", String(Int(min(max(position, 0), 100))))
+    }
+
+    /// Track languages picked automatically when a file opens ("en,ja"; empty = the file's default).
+    func setPreferredLanguages(audio: String, subtitles: String) {
+        setProperty("alang", Self.languageList(audio))
+        setProperty("slang", Self.languageList(subtitles))
+    }
+
+    static func languageList(_ text: String) -> String {
+        text.split(whereSeparator: { $0 == "," || $0 == " " }).map { $0.lowercased() }.joined(separator: ",")
     }
 
     private static let directMediaExtensions: Set<String> = [
@@ -471,7 +581,7 @@ final class PlaybackEngine: ObservableObject {
     }
 
     func setVolume(_ newValue: Float) {
-        let bounded = min(max(newValue, 0), 1)
+        let bounded = min(max(newValue, 0), maxVolume)
         volume = bounded
         setProperty("volume", String(Double(bounded) * 100))
         if bounded > 0, isMuted {
@@ -804,6 +914,29 @@ final class PlaybackEngine: ObservableObject {
                 ranges.count != bufferedRanges.count
                 || zip(ranges, bufferedRanges).contains { abs($0.lowerBound - $1.lowerBound) > 0.5 || abs($0.upperBound - $1.upperBound) > 0.5 }
             if changed { bufferedRanges = ranges }
+        case "width":
+            sourceSize.width = hasValue ? CGFloat(property.data.assumingMemoryBound(to: Int64.self).pointee) : 0
+        case "height":
+            sourceSize.height = hasValue ? CGFloat(property.data.assumingMemoryBound(to: Int64.self).pointee) : 0
+        case "audio-device-list":
+            guard hasValue else { return }
+            let node = property.data.assumingMemoryBound(to: mpv_node.self).pointee
+            let list = MPV.value(from: node) as? [Any] ?? []
+            audioDevices = list.compactMap { entry in
+                guard let map = entry as? [String: Any], let name = map.string("name") else { return nil }
+                // mpv lists every Core Audio device twice ("coreaudio/<id>" and the exclusive
+                // "coreaudio-exclusive/..."); exclusive mode isn't offered.
+                guard name == "auto" || name.hasPrefix("coreaudio/") else { return nil }
+                return (name, name == "auto" ? "System Default" : map.string("description") ?? name)
+            }
+        case "audio-device":
+            if hasValue, let raw = property.data.assumingMemoryBound(to: UnsafePointer<CChar>?.self).pointee {
+                audioDevice = String(cString: raw)
+            }
+        case "deinterlace":
+            if hasValue, let raw = property.data.assumingMemoryBound(to: UnsafePointer<CChar>?.self).pointee {
+                deinterlace = String(cString: raw)
+            }
         case "partially-seekable":
             isPartiallySeekable = hasValue && property.data.assumingMemoryBound(to: Int32.self).pointee != 0
             updateLiveState()

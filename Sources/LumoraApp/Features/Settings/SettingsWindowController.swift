@@ -280,7 +280,15 @@ enum SettingsPanes {
                         control: Form.slider(
                             range: 0...1, step: 0.01,
                             format: { "\(Int(($0 * 100).rounded()))%" },
-                            { Double(settings.volume) }, { settings.volume = Float($0) }))
+                            { Double(min(settings.volume, 1)) }, { settings.volume = Float($0) })),
+                    Form.row(
+                        "Volume boost", detail: "Lets the volume go up to 200% for quiet files. Very loud sources may distort.",
+                        control: Form.toggle({ settings.volumeBoost }, { settings.volumeBoost = $0 })),
+                    Form.row(
+                        "Preferred languages", detail: "Audio track chosen when a file opens, e.g. en, ja. Empty uses the file's default.",
+                        control: Form.textField(
+                            placeholder: "File default", width: 180,
+                            { settings.preferredAudioLanguages }, { settings.preferredAudioLanguages = $0 }))
                 ]),
             Form.section(
                 "Equalizer", footnote: "Ten bands from 31 Hz to 16 kHz, ±12 dB.",
@@ -315,7 +323,30 @@ enum SettingsPanes {
                     "Default delay", detail: "Applied to each new file. Z / X adjust the current file only.",
                     control: Form.slider(
                         range: -10...10, step: 0.1, format: { String(format: "%+.1f s", $0) },
-                        { settings.subtitleDelay }, { settings.subtitleDelay = $0 }))
+                        { settings.subtitleDelay }, { settings.subtitleDelay = $0 })),
+                Form.row(
+                    "Font",
+                    control: Form.popup(
+                        [("System", "")] + NSFontManager.shared.availableFontFamilies.map { ($0, $0) },
+                        { settings.subtitleFont }, { settings.subtitleFont = $0 })),
+                Form.row(
+                    "Colour",
+                    control: Form.colorWell({ settings.subtitleColor }, { settings.subtitleColor = $0 })),
+                Form.row(
+                    "Background",
+                    control: Form.popup(
+                        SubtitleBackground.allCases.map { ($0.title, $0) },
+                        { settings.subtitleBackground }, { settings.subtitleBackground = $0 })),
+                Form.row(
+                    "Position", detail: "How far above the bottom text subtitles sit.",
+                    control: Form.slider(
+                        range: 50...100, step: 1, format: { $0 >= 100 ? "Bottom" : "\(Int(100 - $0))% up" },
+                        { settings.subtitlePosition }, { settings.subtitlePosition = $0 })),
+                Form.row(
+                    "Preferred languages", detail: "Subtitle track turned on when a file opens, e.g. en, es. Empty uses the file's default.",
+                    control: Form.textField(
+                        placeholder: "File default", width: 180,
+                        { settings.preferredSubtitleLanguages }, { settings.preferredSubtitleLanguages = $0 }))
             ])
         return [
             appearance,
@@ -324,6 +355,10 @@ enum SettingsPanes {
                 Form.button("Reset Appearance") {
                     settings.subtitleSize = 24
                     settings.subtitleDelay = 0
+                    settings.subtitleFont = ""
+                    settings.subtitleColor = "#FFFFFF"
+                    settings.subtitleBackground = .outline
+                    settings.subtitlePosition = 100
                     appearance.refreshBoundControls()
                 }
             ]),

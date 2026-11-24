@@ -189,6 +189,16 @@ enum Form {
         return field
     }
 
+    /// Colour picker bound to a "#RRGGBB" string.
+    static func colorWell(_ get: @escaping () -> String, _ set: @escaping (String) -> Void) -> NSColorWell {
+        let well = BoundColorWell(style: .default)
+        well.color = NSColor(hex: get()) ?? .white
+        well.onChange = { set($0.color.hexString) }
+        well.refresh = { [weak well] in well?.color = NSColor(hex: get()) ?? .white }
+        well.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        return well
+    }
+
     static func button(_ title: String, style: NSButton.BezelStyle = .push, action: @escaping () -> Void) -> NSButton {
         let button = BoundButton(title: title, target: nil, action: nil)
         button.bezelStyle = style
@@ -342,6 +352,43 @@ final class BoundSecureTextField: BoundTextField {
     override class var cellClass: AnyClass? {
         get { NSSecureTextFieldCell.self }
         set {}
+    }
+}
+
+final class BoundColorWell: NSColorWell, Refreshable {
+    var onChange: ((NSColorWell) -> Void)?
+    var refresh: (() -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        target = self
+        action = #selector(changed)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    @objc private func changed() {
+        onChange?(self)
+    }
+}
+
+extension NSColor {
+    convenience init?(hex: String) {
+        let digits = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        guard digits.count == 6, let value = UInt32(digits, radix: 16) else { return nil }
+        self.init(
+            srgbRed: CGFloat((value >> 16) & 0xFF) / 255, green: CGFloat((value >> 8) & 0xFF) / 255,
+            blue: CGFloat(value & 0xFF) / 255, alpha: 1)
+    }
+
+    var hexString: String {
+        let color = usingColorSpace(.sRGB) ?? self
+        let r = Int((color.redComponent * 255).rounded())
+        let g = Int((color.greenComponent * 255).rounded())
+        let b = Int((color.blueComponent * 255).rounded())
+        return String(format: "#%02X%02X%02X", r, g, b)
     }
 }
 

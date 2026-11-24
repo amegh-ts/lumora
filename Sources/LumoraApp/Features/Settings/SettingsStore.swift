@@ -7,6 +7,21 @@ enum VideoGravityPreference: String, Codable, CaseIterable {
     case stretch
 }
 
+/// How text subtitles stand out from the picture.
+enum SubtitleBackground: String, Codable, CaseIterable {
+    case outline
+    case shadow
+    case box
+
+    var title: String {
+        switch self {
+        case .outline: return "Outline"
+        case .shadow: return "Drop shadow"
+        case .box: return "Dark box"
+        }
+    }
+}
+
 /// When a newly opened file resizes the player window to the video.
 enum WindowFitMode: String, Codable, CaseIterable {
     case always
@@ -48,6 +63,14 @@ final class SettingsStore: ObservableObject {
     @Published var renderer: VideoRenderer = .metal { didSet { persist() } }
     @Published var streamQuality: StreamQuality = .auto { didSet { persist() } }
     @Published var windowFit: WindowFitMode = .always { didSet { persist() } }
+    @Published var subtitleFont: String = "" { didSet { persist() } }
+    @Published var subtitleColor: String = "#FFFFFF" { didSet { persist() } }
+    @Published var subtitleBackground: SubtitleBackground = .outline { didSet { persist() } }
+    @Published var subtitlePosition: Double = 100 { didSet { persist() } }
+    @Published var preferredAudioLanguages: String = "" { didSet { persist() } }
+    @Published var preferredSubtitleLanguages: String = "" { didSet { persist() } }
+    @Published var volumeBoost: Bool = false { didSet { persist() } }
+    @Published var audioDevice: String = "auto" { didSet { persist() } }
     @Published var subtitleDelay: TimeInterval = 0 { didSet { persist() } }
     @Published var autoDownloadSubtitles = false { didSet { persist() } }
     @Published var subtitleLanguages: String = "en" { didSet { persist() } }
@@ -93,6 +116,14 @@ final class SettingsStore: ObservableObject {
         var renderer: VideoRenderer?
         var streamQuality: StreamQuality = .auto
         var windowFit: WindowFitMode = .always
+        var subtitleFont: String = ""
+        var subtitleColor: String = "#FFFFFF"
+        var subtitleBackground: SubtitleBackground = .outline
+        var subtitlePosition: Double = 100
+        var preferredAudioLanguages: String = ""
+        var preferredSubtitleLanguages: String = ""
+        var volumeBoost: Bool = false
+        var audioDevice: String = "auto"
 
         init() {}
 
@@ -125,6 +156,14 @@ final class SettingsStore: ObservableObject {
             renderer = value(.renderer, d.renderer)
             streamQuality = value(.streamQuality, d.streamQuality)
             windowFit = value(.windowFit, d.windowFit)
+            subtitleFont = value(.subtitleFont, d.subtitleFont)
+            subtitleColor = value(.subtitleColor, d.subtitleColor)
+            subtitleBackground = value(.subtitleBackground, d.subtitleBackground)
+            subtitlePosition = value(.subtitlePosition, d.subtitlePosition)
+            preferredAudioLanguages = value(.preferredAudioLanguages, d.preferredAudioLanguages)
+            preferredSubtitleLanguages = value(.preferredSubtitleLanguages, d.preferredSubtitleLanguages)
+            volumeBoost = value(.volumeBoost, d.volumeBoost)
+            audioDevice = value(.audioDevice, d.audioDevice)
         }
     }
 
@@ -162,6 +201,14 @@ final class SettingsStore: ObservableObject {
         renderer = .metal
         streamQuality = defaults.streamQuality
         windowFit = defaults.windowFit
+        subtitleFont = defaults.subtitleFont
+        subtitleColor = defaults.subtitleColor
+        subtitleBackground = defaults.subtitleBackground
+        subtitlePosition = defaults.subtitlePosition
+        preferredAudioLanguages = defaults.preferredAudioLanguages
+        preferredSubtitleLanguages = defaults.preferredSubtitleLanguages
+        volumeBoost = defaults.volumeBoost
+        audioDevice = defaults.audioDevice
         isLoading = false
         persist()
     }
@@ -202,6 +249,14 @@ final class SettingsStore: ObservableObject {
         renderer = snapshot.renderer ?? .metal
         streamQuality = snapshot.streamQuality
         windowFit = snapshot.windowFit
+        subtitleFont = snapshot.subtitleFont
+        subtitleColor = snapshot.subtitleColor
+        subtitleBackground = snapshot.subtitleBackground
+        subtitlePosition = snapshot.subtitlePosition
+        preferredAudioLanguages = snapshot.preferredAudioLanguages
+        preferredSubtitleLanguages = snapshot.preferredSubtitleLanguages
+        volumeBoost = snapshot.volumeBoost
+        audioDevice = snapshot.audioDevice
     }
 
     func save() {
@@ -250,6 +305,14 @@ final class SettingsStore: ObservableObject {
         snapshot.renderer = renderer
         snapshot.streamQuality = streamQuality
         snapshot.windowFit = windowFit
+        snapshot.subtitleFont = subtitleFont
+        snapshot.subtitleColor = subtitleColor
+        snapshot.subtitleBackground = subtitleBackground
+        snapshot.subtitlePosition = subtitlePosition
+        snapshot.preferredAudioLanguages = preferredAudioLanguages
+        snapshot.preferredSubtitleLanguages = preferredSubtitleLanguages
+        snapshot.volumeBoost = volumeBoost
+        snapshot.audioDevice = audioDevice
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         AppPaths.ensureDirectories()
         try? data.write(to: AppPaths.settingsFile, options: .atomic)

@@ -15,6 +15,10 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     private let titleBar = TitleOverlayView(frame: .zero)
     private let emptyState = EmptyStateView(frame: .zero)
     private let audioArtwork = AudioArtworkView(frame: .zero)
+    private let miniControls = MiniControlsView(frame: .zero)
+    private var snapWork: DispatchWorkItem?
+    private var isSnapping = false
+    private var isMiniPlayer: Bool { miniPlayerRestoreFrame != nil }
     let osd = OSDView(frame: .zero)
     private let thumbnail = ThumbnailPreviewView(frame: .zero)
     private let spinner = NSProgressIndicator()
@@ -42,6 +46,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     static let hiddenSuspendDelay: TimeInterval = 5
 
     var playlistCount: Int { playlist.items.count }
+    var debugPlaylistTitles: [String] { playlist.items.map(\.title) }
+    var debugPlaylistIndex: Int? { playlist.currentIndex }
     var areControlsShowing: Bool { chromeVisible && !controls.isHidden }
 
     var windowController: MainWindowController? {
@@ -87,7 +93,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     }
 
     private func installViews() {
-        for subview in [videoView, audioArtwork, emptyState, titleBar, spinner, loadingLabel, osd, sidebar, controls, thumbnail] as [NSView] {
+        for subview in [videoView, audioArtwork, emptyState, titleBar, spinner, loadingLabel, osd, sidebar, controls, miniControls, thumbnail] as [NSView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(subview)
         }
@@ -98,6 +104,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         sidebar.isHidden = true
         sidebar.delegate = self
         audioArtwork.isHidden = true
+        miniControls.isHidden = true
+        miniControls.alphaValue = 0
 
         let maxWidth = controls.widthAnchor.constraint(lessThanOrEqualToConstant: 780)
         let preferredWidth = controls.widthAnchor.constraint(equalToConstant: 780)
@@ -106,12 +114,20 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         let centered = controls.centerXAnchor.constraint(equalTo: rootView.centerXAnchor)
         centered.priority = NSLayoutConstraint.Priority(rawValue: 450)
         thumbnailX = thumbnail.centerXAnchor.constraint(equalTo: rootView.leadingAnchor, constant: 0)
+        // The sidebar's content must not set a minimum window height (the mini player is small).
+        let sidebarBottom = sidebar.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -10)
+        sidebarBottom.priority = NSLayoutConstraint.Priority(450)
 
         NSLayoutConstraint.activate([
             videoView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             videoView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             videoView.topAnchor.constraint(equalTo: rootView.topAnchor),
             videoView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+
+            miniControls.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            miniControls.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            miniControls.topAnchor.constraint(equalTo: rootView.topAnchor),
+            miniControls.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
 
             audioArtwork.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             audioArtwork.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
@@ -146,7 +162,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
             sidebar.trailingAnchor.constraint(equalTo: rootView.trailingAnchor, constant: -10),
             sidebar.topAnchor.constraint(equalTo: rootView.topAnchor, constant: 40),
-            sidebar.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -10),
+            sidebarBottom,
             sidebar.widthAnchor.constraint(equalToConstant: 290),
 
             thumbnail.bottomAnchor.constraint(equalTo: controls.topAnchor, constant: -6),
@@ -155,6 +171,11 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
         controls.onAction = { [weak self] action in self?.handle(action) }
         controls.menuProvider = { [weak self] kind in self?.menu(for: kind) ?? NSMenu() }
+        miniControls.onTogglePlayback = { [weak self] in self?.engine.togglePlayback() }
+        miniControls.onSkip = { [weak self] in self?.engine.skip($0) }
+        miniControls.onScrub = { [weak self] time, finished in self?.engine.seek(to: time, exact: finished) }
+        miniControls.onExpand = { [weak self] in self?.toggleMiniPlayer(nil) }
+        miniControls.onClose = { [weak self] in self?.view.window?.performClose(nil) }
         emptyState.onOpenFile = { [weak self] in self?.chooseFiles() }
         emptyState.onOpenURL = { [weak self] in self?.windowController?.promptForURL() }
         emptyState.onOpenRecent = { [weak self] url in self?.windowController?.open([url]) }
@@ -166,7 +187,11 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             .sink { [weak self] time, duration in
                 guard let self else { return }
                 if self.chromeVisible {
-                    self.controls.update(time: time, duration: duration)
+                    if self.isMiniPlayer {
+                        self.miniControls.update(time: time, duration: duration)
+                    } else {
+                        self.controls.update(time: time, duration: duration)
+                    }
                 }
                 self.saveProgress(force: false)
                 NowPlayingService.shared.playerDidUpdateTime(self)
@@ -204,6 +229,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             .sink { [weak self] isPlaying in
                 guard let self else { return }
                 self.controls.update(isPlaying: isPlaying)
+                self.miniControls.update(isPlaying: isPlaying)
                 if isPlaying {
                     NowPlayingService.shared.playerDidStartPlaying(self)
                 } else {
@@ -375,6 +401,14 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             }
             .store(in: &cancellables)
 
+        // Mini player: after a drag ends, glide to the nearest screen corner.
+        NotificationCenter.default.publisher(for: NSWindow.didMoveNotification)
+            .sink { [weak self] note in
+                guard let self, self.isMiniPlayer, !self.isSnapping, (note.object as? NSWindow) === self.view.window else { return }
+                self.scheduleSnap()
+            }
+            .store(in: &cancellables)
+
         NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)
             .merge(with: NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification))
             .sink { [weak self] _ in self?.refreshControlState() }
@@ -391,11 +425,48 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         engine.defaultSubtitleDelay = settings.subtitleDelay
         engine.setHardwareDecoding(settings.hardwareDecoding)
         engine.setEqualizer(settings.equalizerGains)
+        applySubtitleStyle()
+        engine.setPreferredLanguages(audio: settings.preferredAudioLanguages, subtitles: settings.preferredSubtitleLanguages)
+        engine.setVolumeBoost(settings.volumeBoost)
+        controls.setVolumeMax(engine.maxVolume)
         playlist.shuffle = settings.shuffle
         playlist.repeatMode = settings.repeatMode
     }
 
+    private func applySubtitleStyle() {
+        engine.setSubtitleStyle(
+            font: settings.subtitleFont, color: settings.subtitleColor,
+            background: settings.subtitleBackground, position: settings.subtitlePosition)
+    }
+
     private func installSettingsBindings() {
+        settings.$subtitleFont.combineLatest(settings.$subtitleColor, settings.$subtitleBackground, settings.$subtitlePosition)
+            .dropFirst()
+            // @Published fires before storing; read the settings on the next turn.
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.applySubtitleStyle() } }
+            .store(in: &cancellables)
+        settings.$preferredAudioLanguages.combineLatest(settings.$preferredSubtitleLanguages).dropFirst()
+            .sink { [weak self] audio, subtitles in self?.engine.setPreferredLanguages(audio: audio, subtitles: subtitles) }
+            .store(in: &cancellables)
+        settings.$volumeBoost.removeDuplicates().dropFirst()
+            .sink { [weak self] enabled in
+                guard let self else { return }
+                self.engine.setVolumeBoost(enabled)
+                self.controls.setVolumeMax(self.engine.maxVolume)
+                self.controls.update(volume: self.engine.volume, muted: self.engine.isMuted)
+            }
+            .store(in: &cancellables)
+        // The saved output device may be unplugged; use it only when it's present.
+        engine.$audioDevices
+            .combineLatest(settings.$audioDevice)
+            .sink { [weak self] devices, wanted in
+                guard let self else { return }
+                let target = devices.contains { $0.name == wanted } ? wanted : "auto"
+                if target != self.engine.audioDevice {
+                    self.engine.setAudioDevice(target)
+                }
+            }
+            .store(in: &cancellables)
         settings.$videoGravity.removeDuplicates().dropFirst()
             .sink { [weak self] in
                 self?.engine.setGravity($0)
@@ -488,9 +559,26 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
     /// Video size in points with rotation applied (one video pixel per point).
     private var orientedVideoSize: CGSize? {
-        let size = engine.videoSize
+        var size = engine.videoSize
         guard size.width > 0, size.height > 0 else { return nil }
+        // Aspect Ratio and Crop change the shown shape; keep the height and adjust the width.
+        if let aspect = engine.displayAspect {
+            size.width = (size.height * aspect).rounded()
+        }
         return engine.rotation % 180 != 0 ? CGSize(width: size.height, height: size.width) : size
+    }
+
+    /// After Aspect Ratio or Crop: lock the new shape and resize the window around it.
+    func reshapeWindowForPicture() {
+        updateAspectLock()
+        guard let window = view.window, !window.styleMask.contains(.fullScreen), miniPlayerRestoreFrame == nil,
+            let size = orientedVideoSize
+        else { return }
+        let content = window.contentRect(forFrameRect: window.frame)
+        let target = NSSize(width: (content.height * size.width / size.height).rounded(), height: content.height)
+        var frame = window.frameRect(forContentRect: NSRect(origin: content.origin, size: target))
+        frame.origin.x = window.frame.midX - frame.width / 2
+        window.setFrame(frame, display: true, animate: !reduceMotion)
     }
 
     /// scale nil = as large as fits within maxFraction of the screen (never upscaling past
@@ -616,25 +704,39 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     // MARK: - Chrome visibility
 
     private func setChromeVisible(_ visible: Bool, animated: Bool) {
-        let showControls = visible && engine.hasMedia
+        // The mini player swaps the control bar and title for its own compact controls.
+        let mini = isMiniPlayer
+        let showControls = visible && engine.hasMedia && !mini
+        let showMini = visible && engine.hasMedia && mini
         chromeVisible = visible
         let duration = animated && !reduceMotion ? HUD.fadeDuration : 0
         if showControls {
             controls.isHidden = false
             controls.update(time: engine.currentTime, duration: engine.duration)
         }
+        if showMini {
+            miniControls.isHidden = false
+            miniControls.update(time: engine.currentTime, duration: engine.duration)
+            miniControls.update(isPlaying: engine.isPlaying)
+        }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = duration
             controls.animator().alphaValue = showControls ? 1 : 0
             titleBar.animator().alphaValue = showControls ? 1 : 0
+            miniControls.animator().alphaValue = showMini ? 1 : 0
             if let buttons = view.window?.standardWindowButton(.closeButton)?.superview {
-                buttons.animator().alphaValue = visible ? 1 : 0
+                buttons.animator().alphaValue = visible && !mini ? 1 : 0
             }
         } completionHandler: { [weak self] in
             // Fully hidden controls stop drawing and tracking the mouse.
             MainActor.assumeIsolated {
-                guard let self, !self.chromeVisible || !self.engine.hasMedia else { return }
-                self.controls.isHidden = true
+                guard let self else { return }
+                if !self.chromeVisible || !self.engine.hasMedia || self.isMiniPlayer {
+                    self.controls.isHidden = true
+                }
+                if !self.chromeVisible || !self.engine.hasMedia || !self.isMiniPlayer {
+                    self.miniControls.isHidden = true
+                }
             }
         }
         if !visible {
@@ -813,6 +915,12 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         let delay = NSMenuItem(title: "Audio Delay: \(String(format: "%+.1f", engine.audioDelay)) s", action: nil, keyEquivalent: "")
         delay.submenu = delayMenu { [weak self] in self?.adjustAudioDelay($0) }
         menu.addItem(delay)
+        let device = NSMenuItem(title: "Output Device", action: nil, keyEquivalent: "")
+        let devices = NSMenu()
+        fill(.audioDevice, into: devices)
+        device.submenu = devices
+        menu.addItem(device)
+        menu.addItem(ClosureMenuItem("Volume Boost", checked: settings.volumeBoost) { [weak self] in self?.toggleVolumeBoost(nil) })
         menu.addItem(
             ClosureMenuItem("Equalizer…") {
                 (NSApp.delegate as? AppDelegate)?.showAudioSettings(nil)
@@ -1205,13 +1313,47 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         osd.show(window.level == .floating ? "Keep on top" : "Normal window", symbol: "pin.fill")
     }
 
+    private func scheduleSnap() {
+        snapWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                // Still dragging: check again shortly.
+                if NSEvent.pressedMouseButtons != 0 {
+                    self.scheduleSnap()
+                } else {
+                    self.snapToCorner()
+                }
+            }
+        }
+        snapWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
+    }
+
+    private func snapToCorner() {
+        guard isMiniPlayer, let window = view.window, let screen = window.screen ?? NSScreen.main else { return }
+        let visible = screen.visibleFrame
+        let margin: CGFloat = 20
+        var frame = window.frame
+        frame.origin.x = frame.midX < visible.midX ? visible.minX + margin : visible.maxX - frame.width - margin
+        frame.origin.y = frame.midY < visible.midY ? visible.minY + margin : visible.maxY - frame.height - margin
+        guard frame.origin != window.frame.origin else { return }
+        isSnapping = true
+        window.setFrame(frame, display: true, animate: !reduceMotion)
+        isSnapping = false
+    }
+
     @objc func toggleMiniPlayer(_ sender: Any?) {
         guard let window = view.window else { return }
         if let restore = miniPlayerRestoreFrame {
             miniPlayerRestoreFrame = nil
+            snapWork?.cancel()
             window.level = .normal
             window.collectionBehavior.remove(.canJoinAllSpaces)
+            window.minSize = NSSize(width: 420, height: 260)
             window.setFrame(restore, display: true, animate: !reduceMotion)
+            setChromeVisible(true, animated: false)
+            scheduleHide()
             return
         }
         if window.styleMask.contains(.fullScreen) {
@@ -1219,15 +1361,20 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         }
         guard let screen = window.screen ?? NSScreen.main else { return }
         miniPlayerRestoreFrame = window.frame
-        let size = engine.videoSize
-        let aspect = size.height > 0 ? size.width / size.height : 16 / 9
-        let width: CGFloat = 420
+        let size = orientedVideoSize ?? CGSize(width: 16, height: 9)
+        let aspect = size.width / size.height
+        let width: CGFloat = aspect < 1 ? 240 : 360
         let content = NSRect(x: 0, y: 0, width: width, height: width / aspect)
         var frame = window.frameRect(forContentRect: content)
         frame.origin = NSPoint(x: screen.visibleFrame.maxX - frame.width - 20, y: screen.visibleFrame.minY + 20)
         window.level = .floating
         window.collectionBehavior.insert(.canJoinAllSpaces)
+        window.minSize = NSSize(width: 200, height: 112)
+        isSnapping = true
         window.setFrame(frame, display: true, animate: !reduceMotion)
+        isSnapping = false
+        setChromeVisible(true, animated: false)
+        scheduleHide()
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -1243,6 +1390,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             return engine.hasMedia
         case #selector(nextItem(_:)), #selector(previousItem(_:)):
             return playlist.items.count > 1
+        case #selector(toggleVolumeBoost(_:)):
+            menuItem.state = settings.volumeBoost ? .on : .off
+            return true
         case #selector(toggleShuffle(_:)):
             menuItem.state = settings.shuffle ? .on : .off
             return true

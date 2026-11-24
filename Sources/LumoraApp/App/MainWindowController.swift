@@ -99,6 +99,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             playerViewController.addSubtitles(subtitles, forNextFile: !media.isEmpty)
         }
         guard !media.isEmpty else { return }
+        if media.count == 1, PlaylistImporter.isYouTubePlaylist(media[0]) {
+            openYouTubePlaylist(media[0])
+            return
+        }
         // Folders can hold thousands of files (or sit on a slow network share): list them off the main thread.
         Task { [weak self] in
             let expanded = await Self.expandInBackground(media)
@@ -112,19 +116,47 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 self.reportMissing(missing)
             }
             // Reopening something already in the playlist selects it instead of adding a duplicate.
-            if expanded.count == 1, let existing = self.playlist.index(of: expanded[0]) {
+            if expanded.count == 1, let existing = self.playlist.index(of: expanded[0].url) {
                 self.playlist.select(at: existing)
                 self.playCurrent()
                 return
             }
             let firstNewIndex = self.playlist.items.count
-            self.playlist.add(expanded.map { PlaybackItem(url: $0) })
+            self.playlist.add(expanded)
             self.playlist.select(at: firstNewIndex)
             self.playCurrent()
         }
     }
 
-    private static func expandInBackground(_ urls: [URL]) async -> [URL] {
+    /// Loads every video of a YouTube playlist as its own item, starting at the linked video.
+    /// Falls back to playing the link directly if yt-dlp can't list it.
+    private func openYouTubePlaylist(_ url: URL) {
+        playerViewController.osd.show("Loading playlist…", symbol: "list.bullet.rectangle", duration: 3)
+        let tool = Self.toolPath(settings.ytDLPPath, name: "yt-dlp")
+        Task { [weak self] in
+            let result = await PlaylistImporter.youTubeEntries(for: url, ytdlPath: tool)
+            guard let self else { return }
+            guard let result else {
+                self.playlist.add([PlaybackItem(url: url)])
+                self.playlist.select(at: self.playlist.items.count - 1)
+                self.playCurrent()
+                return
+            }
+            let firstNewIndex = self.playlist.items.count
+            self.playlist.add(result.entries.map { PlaybackItem(url: $0.url, title: $0.title) })
+            self.playlist.select(at: firstNewIndex + result.start)
+            self.playCurrent()
+            self.playerViewController.osd.show("\(result.entries.count) videos added", symbol: "list.bullet.rectangle")
+        }
+    }
+
+    /// The configured tool, or the usual Homebrew locations when that path doesn't exist.
+    private static func toolPath(_ configured: String, name: String) -> String {
+        let candidates = [configured, "/opt/homebrew/bin/\(name)", "/usr/local/bin/\(name)"]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) } ?? configured
+    }
+
+    private static func expandInBackground(_ urls: [URL]) async -> [PlaybackItem] {
         await Task.detached(priority: .userInitiated) {
             MainWindowController.expandFiles(urls)
         }.value
@@ -165,7 +197,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func enqueue(_ urls: [URL]) {
-        let items = Self.expandFiles(urls).map { PlaybackItem(url: $0) }
+        let items = Self.expandFiles(urls)
         guard !items.isEmpty else { return }
         let wasEmpty = playlist.items.isEmpty
         playlist.add(items)
@@ -230,11 +262,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         playCurrent()
     }
 
-    nonisolated static func expandFiles(_ urls: [URL]) -> [URL] {
-        var result: [URL] = []
+    /// Files, folders (sorted, recursive) and playlist files become playlist items.
+    nonisolated static func expandFiles(_ urls: [URL]) -> [PlaybackItem] {
+        var result: [PlaybackItem] = []
         for url in urls {
             guard url.isFileURL else {
-                result.append(url)
+                result.append(PlaybackItem(url: url))
                 continue
             }
             var isDirectory: ObjCBool = false
@@ -247,14 +280,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 )
                 var found: [URL] = []
                 while let file = enumerator?.nextObject() as? URL {
-                    if Self.isMedia(file) {
+                    // A folder's own media already covers what any playlist file in it lists.
+                    if Self.isMedia(file), !PlaylistImporter.fileExtensions.contains(file.pathExtension.lowercased()) {
                         found.append(file)
                     }
                 }
                 found.sort { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
-                result.append(contentsOf: found)
+                result.append(contentsOf: found.map { PlaybackItem(url: $0) })
+            } else if let entries = PlaylistImporter.entries(inFile: url) {
+                result.append(contentsOf: entries.map { PlaybackItem(url: $0.url, title: $0.title) })
             } else if Self.isMedia(url) || !SubtitleService.isSubtitleFile(url) {
-                result.append(url)
+                result.append(PlaybackItem(url: url))
             }
         }
         return result

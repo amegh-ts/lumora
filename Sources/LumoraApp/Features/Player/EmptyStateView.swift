@@ -67,11 +67,17 @@ final class EmptyStateView: NSView {
         stack.setCustomSpacing(6, after: recentHeader)
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
+        // Margins give way when the window is smaller than the text (e.g. the mini player,
+        // where this view is hidden) instead of setting the window's minimum width.
+        let leading = stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 24)
+        let trailing = stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24)
+        leading.priority = NSLayoutConstraint.Priority(450)
+        trailing.priority = NSLayoutConstraint.Priority(450)
         NSLayoutConstraint.activate([
             stack.centerXAnchor.constraint(equalTo: centerXAnchor),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -10),
-            stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 24),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
+            leading,
+            trailing,
             errorLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 460)
         ])
     }

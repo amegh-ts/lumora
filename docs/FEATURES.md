@@ -35,6 +35,18 @@
 - Go to Time (⌘J); Half, Actual, Double Size and Fit to Screen; the window keeps the video's shape while resizing, and a setting decides whether new files resize it.
 - Audio files show their title, artist and album (cover art when the file has it); live streams and radio show a LIVE badge instead of a seek bar; streams show the downloaded part on the timeline.
 
+- Mini player: compact controls on hover (play/pause, ±10 s, seek bar, close, expand), snaps to the nearest screen corner, resizes in the video's shape.
+- Aspect ratio override (16:9, 4:3, 2.35:1, 1.85:1, 1:1), crop presets and deinterlacing (Off / Automatic / On) in the Video menu.
+
+## Audio and subtitle preferences
+- Subtitle font, colour, background (outline, drop shadow or dark box) and position.
+- Preferred audio and subtitle languages picked automatically when a file opens.
+- Volume boost up to 200% and an output device picker (Audio menu and the control bar's Audio button).
+
+## Playlists
+- .m3u, .m3u8 and .pls files open as separate playlist items with their titles; HLS stream playlists still play as one stream.
+- YouTube playlist links (and videos opened from a playlist) load every video, up to 500, starting at the linked one.
+
 ## Updates
 - Automatic, signed updates through Sparkle from GitHub Releases.
 

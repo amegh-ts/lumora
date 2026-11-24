@@ -200,6 +200,11 @@ final class ControlsOverlay: NSView {
         playButton.setAccessibilityLabel(playButton.toolTip)
     }
 
+    /// 1 normally, 2 with volume boost (the slider then goes to 200%).
+    func setVolumeMax(_ value: Float) {
+        volumeSlider.maxValue = Double(value)
+    }
+
     func update(volume: Float, muted: Bool) {
         volumeSlider.floatValue = volume
         let symbol: String
@@ -220,6 +225,7 @@ final class ControlsOverlay: NSView {
         volumeButton.toolTip = label
         volumeButton.setAccessibilityLabel(label)
         volumeSlider.setAccessibilityValueDescription("\(Int((volume * 100).rounded())) percent")
+        volumeSlider.toolTip = volume > 1.0001 ? "Volume \(Int((volume * 100).rounded()))% (boosted)" : nil
     }
 
     func update(rate: Float) {
