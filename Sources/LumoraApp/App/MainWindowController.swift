@@ -85,11 +85,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         alert.informativeText = "Paste a link to a video, stream (HLS, RTSP, HTTP) or a YouTube page."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 380, height: 24))
         field.placeholderString = "https://"
-        if let clip = NSPasteboard.general.string(forType: .string),
-           let url = URL(string: clip.trimmingCharacters(in: .whitespacesAndNewlines)),
-           let scheme = url.scheme?.lowercased(), ["http", "https", "rtsp", "rtmp", "ftp", "smb"].contains(scheme) {
-            field.stringValue = url.absoluteString
-        }
         alert.accessoryView = field
         alert.addButton(withTitle: "Play")
         alert.addButton(withTitle: "Cancel")

@@ -111,7 +111,9 @@ final class ThumbnailService {
             ("vf", "scale=w=320:h=-2"),
             ("ytdl", "no"),
             ("idle", "no"),
-            ("load-scripts", "no")
+            ("load-scripts", "no"),
+            ("access-references", "no"),
+            ("load-unsafe-playlists", "no")
         ]
         for (name, value) in options {
             mpv_set_option_string(handle, name, value)

@@ -28,6 +28,7 @@ struct OSDownloadResponse: Decodable {
 
 enum OpenSubtitlesService {
     private static let baseURL = "https://api.opensubtitles.com/api/v1"
+    private static let maxSubtitleBytes = 5 * 1024 * 1024
 
     static func search(query: String, languages: String, apiKey: String) async -> [SubtitleSearchResult] {
         guard !apiKey.isEmpty, !query.isEmpty else { return [] }
@@ -70,9 +71,11 @@ enum OpenSubtitlesService {
               (200..<300).contains(http.statusCode),
               let decoded = try? JSONDecoder().decode(OSDownloadResponse.self, from: data),
               let downloadURL = URL(string: decoded.link),
+              downloadURL.scheme?.lowercased() == "https",
               let (fileData, fileResponse) = try? await URLSession.shared.data(from: downloadURL),
               let fileHTTP = fileResponse as? HTTPURLResponse,
-              (200..<300).contains(fileHTTP.statusCode) else { return nil }
+              (200..<300).contains(fileHTTP.statusCode),
+              fileData.count <= maxSubtitleBytes else { return nil }
         return fileData
     }
 }
