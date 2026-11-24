@@ -17,6 +17,11 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     let osd = OSDView(frame: .zero)
     private let thumbnail = ThumbnailPreviewView(frame: .zero)
     private let spinner = NSProgressIndicator()
+    private let loadingLabel = HUD.label(size: 12, weight: .medium, color: HUD.secondaryText)
+    private var showingEmptyState: Bool?
+    private var equalizerWork: DispatchWorkItem?
+    private var lastActivity = Date()
+    private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     private lazy var sidebar = PlaylistSidebar(store: playlist)
 
     private var thumbnailX: NSLayoutConstraint!
@@ -31,8 +36,12 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     private var scrollAccumulator: CGFloat = 0
     var miniPlayerRestoreFrame: NSRect?
     private var pendingSubtitles: [URL] = []
+    private var suspendVideoWork: DispatchWorkItem?
+    /// How long the window must stay hidden before video is suspended to free GPU memory.
+    static let hiddenSuspendDelay: TimeInterval = 5
 
     var playlistCount: Int { playlist.items.count }
+    var areControlsShowing: Bool { chromeVisible && !controls.isHidden }
 
     var windowController: MainWindowController? {
         view.window?.windowController as? MainWindowController
@@ -77,7 +86,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     }
 
     private func installViews() {
-        for subview in [videoView, emptyState, titleBar, spinner, osd, sidebar, controls, thumbnail] as [NSView] {
+        for subview in [videoView, emptyState, titleBar, spinner, loadingLabel, osd, sidebar, controls, thumbnail] as [NSView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(subview)
         }
@@ -114,6 +123,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
             spinner.centerXAnchor.constraint(equalTo: rootView.centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: rootView.centerYAnchor),
+            loadingLabel.centerXAnchor.constraint(equalTo: rootView.centerXAnchor),
+            loadingLabel.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 10),
+            loadingLabel.widthAnchor.constraint(lessThanOrEqualTo: rootView.widthAnchor, constant: -80),
 
             osd.centerXAnchor.constraint(equalTo: rootView.centerXAnchor),
             osd.topAnchor.constraint(equalTo: rootView.topAnchor, constant: 48),
@@ -146,7 +158,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             .combineLatest(engine.$duration)
             .sink { [weak self] time, duration in
                 guard let self else { return }
-                self.controls.update(time: time, duration: duration)
+                if self.chromeVisible {
+                    self.controls.update(time: time, duration: duration)
+                }
                 self.saveProgress(force: false)
                 NowPlayingService.shared.playerDidUpdateTime(self)
             }
@@ -163,7 +177,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
                     NowPlayingService.shared.playerDidChange(self)
                 }
                 if isPlaying {
-                    self.scheduleHide()
+                    // @Published fires before the value changes; schedule once engine.isPlaying is true.
+                    DispatchQueue.main.async { [weak self] in self?.scheduleHide() }
                 } else {
                     self.setChromeVisible(true, animated: true)
                     self.saveProgress(force: true)
@@ -208,6 +223,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
                 guard let self else { return }
                 let loading = hasMedia && (buffering || status.hasPrefix("Opening"))
                 loading ? self.spinner.startAnimation(nil) : self.spinner.stopAnimation(nil)
+                self.loadingLabel.stringValue = buffering && !status.hasPrefix("Opening") ? "Buffering…" : status
+                self.loadingLabel.isHidden = !loading
                 self.refreshEmptyState()
             }
             .store(in: &cancellables)
@@ -224,19 +241,23 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
         playlist.$items
             .sink { [weak self] _ in
-                self?.sidebar.reload()
-                self?.refreshControlState()
+                guard let self else { return }
+                if !self.sidebar.isHidden {
+                    self.sidebar.reload()
+                }
+                self.refreshControlState()
             }
             .store(in: &cancellables)
 
         library.$records
-            .sink { [weak self] _ in self?.refreshEmptyState() }
+            .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self, !self.engine.hasMedia else { return }
+                self.emptyState.setRecent(self.library.continueWatching(limit: 4).filter { $0.url.isFileURL })
+            }
             .store(in: &cancellables)
 
-        settings.objectWillChange
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.applySettings() }
-            .store(in: &cancellables)
+        installSettingsBindings()
 
         engine.onLoad = { [weak self] item in
             guard let self else { return }
@@ -246,7 +267,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             self.emptyState.setError(nil)
             self.titleBar.title = item.title
             self.view.window?.title = item.title
-            self.sidebar.reload()
+            if !self.sidebar.isHidden {
+                self.sidebar.reload()
+            }
         }
         engine.onFileLoaded = { [weak self] item in
             guard let self else { return }
@@ -265,8 +288,18 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         engine.onError = { [weak self] message in
             guard let self else { return }
             self.emptyState.setError(message)
+            self.pendingSubtitles = []
             self.refreshEmptyState()
-            self.osd.show("Can't play this file", symbol: "exclamationmark.triangle.fill", duration: 2.5)
+            let hasNext = (self.playlist.currentIndex ?? 0) + 1 < self.playlist.items.count
+            if hasNext {
+                self.osd.show("Couldn't play — skipping to next", symbol: "exclamationmark.triangle.fill", duration: 2)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                    guard let self, !self.engine.hasMedia else { return }
+                    self.windowController?.playNext(auto: false)
+                }
+            } else {
+                self.osd.show("Couldn't play this file", symbol: "exclamationmark.triangle.fill", duration: 2.5)
+            }
         }
         engine.onRendererFailure = { [weak self] in
             guard let self else { return }
@@ -286,9 +319,18 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         NotificationCenter.default.publisher(for: .lumoraDidDownloadSubtitle)
             .receive(on: RunLoop.main)
             .sink { [weak self] note in
-                guard let track = note.object as? SubtitleTrack, let url = track.url else { return }
-                self?.engine.addSubtitle(url)
-                self?.osd.show("Subtitle added: \(track.title)", symbol: "captions.bubble.fill")
+                guard let self, let track = note.object as? SubtitleTrack, let url = track.url,
+                    self.view.window?.isMainWindow == true, self.engine.hasMedia
+                else { return }
+                self.engine.addSubtitle(url)
+                self.osd.show("Subtitle added: \(track.title)", symbol: "captions.bubble.fill")
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: NSWindow.didChangeOcclusionStateNotification)
+            .sink { [weak self] note in
+                guard let self, let window = note.object as? NSWindow, window === self.view.window else { return }
+                self.windowVisibilityChanged(visible: window.occlusionState.contains(.visible))
             }
             .store(in: &cancellables)
 
@@ -298,18 +340,54 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             .store(in: &cancellables)
     }
 
+    /// Pushes every setting once (new file). Later changes arrive one property at a time through
+    /// `installSettingsBindings`, so a volume tick doesn't re-send the whole configuration to mpv.
+    /// Volume isn't pushed: each window keeps its own; Settings' volume is the default for new ones.
     private func applySettings() {
-        if abs(engine.volume - settings.volume) > 0.005 {
-            engine.setVolume(settings.volume)
-        }
         engine.setGravity(settings.videoGravity)
         engine.setVideoAdjustments(brightness: settings.brightness, contrast: settings.contrast, saturation: settings.saturation)
         engine.setSubtitleScale(settings.subtitleSize / 24)
-        engine.setSubtitleDelay(settings.subtitleDelay)
+        engine.defaultSubtitleDelay = settings.subtitleDelay
         engine.setHardwareDecoding(settings.hardwareDecoding)
         engine.setEqualizer(settings.equalizerGains)
         playlist.shuffle = settings.shuffle
         playlist.repeatMode = settings.repeatMode
+    }
+
+    private func installSettingsBindings() {
+        settings.$videoGravity.removeDuplicates().dropFirst()
+            .sink { [weak self] in self?.engine.setGravity($0) }
+            .store(in: &cancellables)
+        settings.$brightness.combineLatest(settings.$contrast, settings.$saturation).dropFirst()
+            .sink { [weak self] in self?.engine.setVideoAdjustments(brightness: $0, contrast: $1, saturation: $2) }
+            .store(in: &cancellables)
+        settings.$subtitleSize.removeDuplicates().dropFirst()
+            .sink { [weak self] in self?.engine.setSubtitleScale($0 / 24) }
+            .store(in: &cancellables)
+        settings.$subtitleDelay.removeDuplicates().dropFirst()
+            .sink { [weak self] in self?.engine.defaultSubtitleDelay = $0 }
+            .store(in: &cancellables)
+        settings.$hardwareDecoding.removeDuplicates().dropFirst()
+            .sink { [weak self] in self?.engine.setHardwareDecoding($0) }
+            .store(in: &cancellables)
+        settings.$equalizerGains.removeDuplicates().dropFirst()
+            .sink { [weak self] gains in
+                // Rebuilding the audio filter chain on every slider tick causes dropouts.
+                self?.equalizerWork?.cancel()
+                let work = DispatchWorkItem { [weak self] in self?.engine.setEqualizer(gains) }
+                self?.equalizerWork = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+            }
+            .store(in: &cancellables)
+        settings.$streamQuality.removeDuplicates().dropFirst()
+            .sink { [weak self] in self?.engine.setStreamHeightCap($0.maxHeight) }
+            .store(in: &cancellables)
+        settings.$shuffle.removeDuplicates().dropFirst()
+            .sink { [weak self] in self?.playlist.shuffle = $0 }
+            .store(in: &cancellables)
+        settings.$repeatMode.removeDuplicates().dropFirst()
+            .sink { [weak self] in self?.playlist.repeatMode = $0 }
+            .store(in: &cancellables)
     }
 
     func applyInitialVolume() {
@@ -318,8 +396,12 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
     // MARK: - State
 
+    /// Switches between the empty state and the player; does nothing unless that actually changes,
+    /// so background updates never make the controls reappear.
     private func refreshEmptyState() {
         let showEmpty = !engine.hasMedia
+        guard showEmpty != showingEmptyState else { return }
+        showingEmptyState = showEmpty
         emptyState.isHidden = !showEmpty
         if showEmpty {
             emptyState.setRecent(library.continueWatching(limit: 4).filter { $0.url.isFileURL })
@@ -344,9 +426,10 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
     private func fitWindow(to size: CGSize) {
         guard size.width > 0, size.height > 0, !resizedForCurrentFile,
-              let window = view.window, !window.styleMask.contains(.fullScreen),
-              miniPlayerRestoreFrame == nil,
-              let screen = window.screen ?? NSScreen.main else { return }
+            let window = view.window, !window.styleMask.contains(.fullScreen),
+            miniPlayerRestoreFrame == nil,
+            let screen = window.screen ?? NSScreen.main
+        else { return }
         resizedForCurrentFile = true
         let rotated = engine.rotation % 180 != 0
         let videoSize = rotated ? CGSize(width: size.height, height: size.width) : size
@@ -354,17 +437,24 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         let maxSize = CGSize(width: visible.width * 0.8, height: visible.height * 0.8)
         let scale = min(1, maxSize.width / videoSize.width, maxSize.height / videoSize.height)
         var content = CGSize(width: videoSize.width * scale, height: videoSize.height * scale)
-        content.width = max(content.width, 640)
-        content.height = max(content.width * videoSize.height / videoSize.width, 360)
+        let aspect = videoSize.width / videoSize.height
+        content.width = max(content.width, min(640, maxSize.width))
+        content.height = content.width / aspect
+        // Portrait or very tall video: fit the height to the screen and derive the width.
+        if content.height > maxSize.height {
+            content.height = maxSize.height
+            content.width = content.height * aspect
+        }
+        content.height = max(content.height, 240)
         let oldFrame = window.frame
         var frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: content))
         frame.origin = NSPoint(x: oldFrame.midX - frame.width / 2, y: oldFrame.midY - frame.height / 2)
         frame.origin.x = min(max(frame.origin.x, visible.minX), visible.maxX - frame.width)
         frame.origin.y = min(max(frame.origin.y, visible.minY), visible.maxY - frame.height)
-        window.setFrame(frame, display: true, animate: true)
+        window.setFrame(frame, display: true, animate: !reduceMotion)
     }
 
-    private func saveProgress(force: Bool) {
+    func saveProgress(force: Bool) {
         guard let item = engine.currentItem, engine.duration > 0 else { return }
         let time = engine.currentTime
         if engine.duration - time < 5 {
@@ -376,7 +466,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         }
         guard time > 0, force || abs(time - lastSavedTime) >= 10 else { return }
         lastSavedTime = time
-        library.update(url: item.url, title: item.title, resumeTime: time, duration: engine.duration)
+        // Watching again from the middle clears "watched" so resume works for this file again.
+        library.update(url: item.url, title: item.title, resumeTime: time, duration: engine.duration, watched: false)
     }
 
     private func handleFinish() {
@@ -385,7 +476,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             watchedMarked = true
             library.markWatched(url: item.url, title: item.title, duration: engine.duration)
         }
-        if settings.autoplayNext {
+        if settings.autoplayNext || settings.repeatMode == .one {
             windowController?.playNext(auto: true)
         }
     }
@@ -399,13 +490,34 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         Task { @MainActor in
             let results = await OpenSubtitlesService.search(query: query, languages: languages, apiKey: apiKey)
             guard let result = results.first, self.engine.currentItem?.id == expected,
-                  let data = await OpenSubtitlesService.download(result: result, apiKey: apiKey),
-                  self.engine.currentItem?.id == expected,
-                  let track = SubtitleService.saveDownloaded(data, language: result.language, filename: result.title),
-                  let url = track.url else { return }
+                let data = await OpenSubtitlesService.download(result: result, apiKey: apiKey),
+                self.engine.currentItem?.id == expected,
+                let track = SubtitleService.saveDownloaded(data, language: result.language, filename: result.title),
+                let url = track.url
+            else { return }
             self.engine.addSubtitle(url)
             self.osd.show("Subtitle downloaded", symbol: "captions.bubble.fill")
         }
+    }
+
+    // MARK: - Hidden-window memory release
+
+    /// Minimized, on another Space or fully covered: after a short delay turn the video output off
+    /// (audio continues) so its GPU memory is freed; bring it back as soon as the window shows.
+    private func windowVisibilityChanged(visible: Bool) {
+        if DebugMode.background { return }
+        suspendVideoWork?.cancel()
+        suspendVideoWork = nil
+        if visible {
+            engine.resumeVideo()
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.view.window?.occlusionState.contains(.visible) == false else { return }
+            self.engine.suspendVideo()
+        }
+        suspendVideoWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.hiddenSuspendDelay, execute: work)
     }
 
     // MARK: - Chrome visibility
@@ -413,7 +525,11 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     private func setChromeVisible(_ visible: Bool, animated: Bool) {
         let showControls = visible && engine.hasMedia
         chromeVisible = visible
-        let duration = animated ? HUD.fadeDuration : 0
+        let duration = animated && !reduceMotion ? HUD.fadeDuration : 0
+        if showControls {
+            controls.isHidden = false
+            controls.update(time: engine.currentTime, duration: engine.duration)
+        }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = duration
             controls.animator().alphaValue = showControls ? 1 : 0
@@ -421,8 +537,13 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             if let buttons = view.window?.standardWindowButton(.closeButton)?.superview {
                 buttons.animator().alphaValue = visible ? 1 : 0
             }
+        } completionHandler: { [weak self] in
+            // Fully hidden controls stop drawing and tracking the mouse.
+            MainActor.assumeIsolated {
+                guard let self, !self.chromeVisible || !self.engine.hasMedia else { return }
+                self.controls.isHidden = true
+            }
         }
-        controls.isHidden = !engine.hasMedia
         if !visible {
             thumbnail.hide()
             if engine.hasMedia, rootView.window?.isKeyWindow == true {
@@ -431,15 +552,29 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         }
     }
 
+    private static let hideDelay: TimeInterval = 2.5
+
+    /// Called on every mouse move: only moves the existing timer's deadline instead of
+    /// creating a new timer each time.
     private func scheduleHide() {
-        hideTimer?.invalidate()
+        lastActivity = Date()
         if !chromeVisible || (engine.hasMedia && controls.alphaValue < 1) {
             setChromeVisible(true, animated: true)
         }
-        guard engine.isPlaying else { return }
-        hideTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: false) { [weak self] _ in
+        guard engine.isPlaying, !keepsControlsVisible else {
+            hideTimer?.invalidate()
+            hideTimer = nil
+            return
+        }
+        if let hideTimer, hideTimer.isValid {
+            hideTimer.fireDate = lastActivity.addingTimeInterval(Self.hideDelay)
+            return
+        }
+        hideTimer = Timer.scheduledTimer(withTimeInterval: Self.hideDelay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.engine.isPlaying else { return }
+                guard let self else { return }
+                self.hideTimer = nil
+                guard self.engine.isPlaying else { return }
                 if self.controls.isInteracting || !self.sidebar.isHidden {
                     self.scheduleHide()
                     return
@@ -447,6 +582,11 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
                 self.setChromeVisible(false, animated: true)
             }
         }
+    }
+
+    /// Keep controls on screen for VoiceOver and Full Keyboard Access users.
+    private var keepsControlsVisible: Bool {
+        NSWorkspace.shared.isVoiceOverEnabled
     }
 
     // MARK: - Actions
@@ -554,9 +694,10 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         menu.addHeader("Speed")
         for speed: Float in [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 4] {
             let title = speed == 1 ? "Normal" : String(format: "%g×", speed)
-            menu.addItem(ClosureMenuItem(title, checked: abs(engine.rate - speed) < 0.01) { [weak self] in
-                self?.setSpeed(speed)
-            })
+            menu.addItem(
+                ClosureMenuItem(title, checked: abs(engine.rate - speed) < 0.01) { [weak self] in
+                    self?.setSpeed(speed)
+                })
         }
         return menu
     }
@@ -568,28 +709,32 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             menu.addItem(ClosureMenuItem("No audio", enabled: false) {})
         }
         for track in engine.audioTracks {
-            menu.addItem(ClosureMenuItem(track.displayName, checked: track.isSelected) { [weak self] in
-                self?.engine.selectAudioTrack(track.id)
-                self?.osd.show("Audio: \(track.displayName)", symbol: "speaker.wave.2.fill")
-            })
+            menu.addItem(
+                ClosureMenuItem(track.displayName, checked: track.isSelected) { [weak self] in
+                    self?.engine.selectAudioTrack(track.id)
+                    self?.osd.show("Audio: \(track.displayName)", symbol: "speaker.wave.2.fill")
+                })
         }
         menu.addItem(.separator())
         menu.addHeader("Subtitles")
-        menu.addItem(ClosureMenuItem("Off", checked: engine.selectedSubtitleTrackID == nil) { [weak self] in
-            self?.engine.selectSubtitleTrack(nil)
-            self?.osd.show("Subtitles off", symbol: "captions.bubble")
-        })
-        for track in engine.subtitleTracks {
-            menu.addItem(ClosureMenuItem(track.displayName, checked: track.isSelected) { [weak self] in
-                self?.engine.selectSubtitleTrack(track.id)
-                self?.osd.show("Subtitles: \(track.displayName)", symbol: "captions.bubble.fill")
+        menu.addItem(
+            ClosureMenuItem("Off", checked: engine.selectedSubtitleTrackID == nil) { [weak self] in
+                self?.engine.selectSubtitleTrack(nil)
+                self?.osd.show("Subtitles off", symbol: "captions.bubble")
             })
+        for track in engine.subtitleTracks {
+            menu.addItem(
+                ClosureMenuItem(track.displayName, checked: track.isSelected) { [weak self] in
+                    self?.engine.selectSubtitleTrack(track.id)
+                    self?.osd.show("Subtitles: \(track.displayName)", symbol: "captions.bubble.fill")
+                })
         }
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem("Add Subtitle File…") { [weak self] in self?.chooseSubtitleFile() })
-        menu.addItem(ClosureMenuItem("Search Subtitles Online…") {
-            SubtitleSearchWindowController.shared.showWindow(nil)
-        })
+        menu.addItem(
+            ClosureMenuItem("Search Subtitles Online…") {
+                SubtitleSearchWindowController.shared.showWindow(nil)
+            })
         menu.addItem(.separator())
         let delay = NSMenuItem(title: "Subtitle Delay: \(String(format: "%+.1f", settings.subtitleDelay)) s", action: nil, keyEquivalent: "")
         let delayMenu = NSMenu()
@@ -606,6 +751,16 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
     private func moreMenu() -> NSMenu {
         let menu = NSMenu()
+        if !engine.streamVariants.isEmpty {
+            let current = engine.streamVariants.first(where: \.isSelected)?.label
+            let parent = NSMenuItem(title: current.map { "Quality: \($0)" } ?? "Quality", action: nil, keyEquivalent: "")
+            parent.image = NSImage(systemSymbolName: "sparkles.tv", accessibilityDescription: nil)
+            let submenu = NSMenu()
+            fill(.streamQuality, into: submenu)
+            parent.submenu = submenu
+            menu.addItem(parent)
+            menu.addItem(.separator())
+        }
         menu.addItem(ClosureMenuItem("Take Screenshot") { [weak self] in self?.takeScreenshot(nil) })
         menu.addItem(ClosureMenuItem("Add Bookmark") { [weak self] in self?.addBookmark() })
         if let item = engine.currentItem, let bookmarks = library.record(for: item.url)?.bookmarks, !bookmarks.isEmpty {
@@ -622,9 +777,10 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             let submenu = NSMenu()
             for (index, chapter) in engine.chapters.enumerated() {
                 let title = chapter.title.isEmpty ? "Chapter \(index + 1)" : chapter.title
-                submenu.addItem(ClosureMenuItem("\(title)  \(TimeFormatter.string(chapter.time))") { [weak self] in
-                    self?.engine.seek(to: chapter.time)
-                })
+                submenu.addItem(
+                    ClosureMenuItem("\(title)  \(TimeFormatter.string(chapter.time))") { [weak self] in
+                        self?.engine.seek(to: chapter.time)
+                    })
             }
             parent.submenu = submenu
             menu.addItem(parent)
@@ -646,9 +802,10 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         let aspectMenu = NSMenu()
         let titles: [(VideoGravityPreference, String)] = [(.aspect, "Fit"), (.fill, "Fill (crop)"), (.stretch, "Stretch")]
         for (preference, title) in titles {
-            aspectMenu.addItem(ClosureMenuItem(title, checked: settings.videoGravity == preference) { [weak self] in
-                self?.settings.videoGravity = preference
-            })
+            aspectMenu.addItem(
+                ClosureMenuItem(title, checked: settings.videoGravity == preference) { [weak self] in
+                    self?.settings.videoGravity = preference
+                })
         }
         aspect.submenu = aspectMenu
         menu.addItem(aspect)
@@ -656,13 +813,15 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         menu.addItem(.separator())
         let onTop = view.window?.level == .floating
         menu.addItem(ClosureMenuItem("Keep on Top", checked: onTop) { [weak self] in self?.toggleKeepOnTop(nil) })
-        menu.addItem(ClosureMenuItem("Mini Player", checked: miniPlayerRestoreFrame != nil) { [weak self] in
-            self?.toggleMiniPlayer(nil)
-        })
+        menu.addItem(
+            ClosureMenuItem("Mini Player", checked: miniPlayerRestoreFrame != nil) { [weak self] in
+                self?.toggleMiniPlayer(nil)
+            })
         menu.addItem(.separator())
-        menu.addItem(ClosureMenuItem("Video & Audio Settings…") {
-            SettingsWindowController.shared.showWindow(nil)
-        })
+        menu.addItem(
+            ClosureMenuItem("Video & Audio Settings…") {
+                SettingsWindowController.shared.showWindow(nil)
+            })
         return menu
     }
 
@@ -690,9 +849,10 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         osd.show(speed == 1 ? "Normal speed" : String(format: "Speed %g×", speed), symbol: "gauge.with.dots.needle.67percent")
     }
 
+    /// Adjusts only the current file; the default in Settings applies to the next file.
     func adjustSubtitleDelay(_ delta: TimeInterval?) {
-        settings.subtitleDelay = delta.map { ((settings.subtitleDelay + $0) * 10).rounded() / 10 } ?? 0
-        osd.show(String(format: "Subtitle delay %+.1f s", settings.subtitleDelay), symbol: "captions.bubble")
+        engine.adjustSubtitleDelay(by: delta)
+        osd.show(String(format: "Subtitle delay %+.1f s", engine.subtitleDelay), symbol: "captions.bubble")
     }
 
     func addBookmark() {
@@ -743,7 +903,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     func playerRootView(_ view: PlayerRootView, isDropTarget: Bool) {
         emptyState.setDropTarget(isDropTarget && !engine.hasMedia)
         if isDropTarget, engine.hasMedia {
-            osd.show("Drop to add to playlist", symbol: "plus.rectangle.on.rectangle", duration: 1)
+            osd.show("Drop to play", symbol: "play.rectangle", duration: 1)
         }
     }
 
@@ -829,6 +989,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     }
 
     func playlistSidebarDidRequestClear(_ sidebar: PlaylistSidebar) {
+        saveProgress(force: true)
         engine.stop()
         playlist.clear()
         sidebar.reload()
@@ -854,6 +1015,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     }
 
     @objc func stopPlayback(_ sender: Any?) {
+        saveProgress(force: true)
         engine.stop()
     }
 
@@ -933,7 +1095,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             miniPlayerRestoreFrame = nil
             window.level = .normal
             window.collectionBehavior.remove(.canJoinAllSpaces)
-            window.setFrame(restore, display: true, animate: true)
+            window.setFrame(restore, display: true, animate: !reduceMotion)
             return
         }
         if window.styleMask.contains(.fullScreen) {
@@ -949,7 +1111,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         frame.origin = NSPoint(x: screen.visibleFrame.maxX - frame.width - 20, y: screen.visibleFrame.minY + 20)
         window.level = .floating
         window.collectionBehavior.insert(.canJoinAllSpaces)
-        window.setFrame(frame, display: true, animate: true)
+        window.setFrame(frame, display: true, animate: !reduceMotion)
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -961,7 +1123,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             menuItem.state = miniPlayerRestoreFrame != nil ? .on : .off
             return engine.hasMedia || miniPlayerRestoreFrame != nil
         case #selector(togglePlayback(_:)), #selector(stopPlayback(_:)), #selector(takeScreenshot(_:)),
-             #selector(cycleSubtitles(_:)), #selector(cycleAudio(_:)), #selector(cycleABLoop(_:)):
+            #selector(cycleSubtitles(_:)), #selector(cycleAudio(_:)), #selector(cycleABLoop(_:)):
             return engine.hasMedia
         case #selector(nextItem(_:)), #selector(previousItem(_:)):
             return playlist.items.count > 1
@@ -978,11 +1140,12 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             menuItem.title = isPlaylistVisible ? "Hide Playlist" : "Show Playlist"
             return true
         case #selector(jumpForward(_:)), #selector(jumpBackward(_:)), #selector(jumpForwardLong(_:)),
-             #selector(jumpBackwardLong(_:)), #selector(nextFrame(_:)), #selector(previousFrame(_:)),
-             #selector(speedUp(_:)), #selector(slowDown(_:)), #selector(normalSpeed(_:)),
-             #selector(addBookmarkAction(_:)), #selector(volumeUp(_:)), #selector(volumeDown(_:)),
-             #selector(addSubtitleFile(_:)), #selector(subtitleEarlier(_:)), #selector(subtitleLater(_:)),
-             #selector(resetSubtitleDelay(_:)), #selector(rotateVideo(_:)):
+            #selector(jumpBackwardLong(_:)), #selector(nextFrame(_:)), #selector(previousFrame(_:)),
+            #selector(speedUp(_:)), #selector(slowDown(_:)), #selector(normalSpeed(_:)),
+            #selector(addBookmarkAction(_:)), #selector(volumeUp(_:)), #selector(volumeDown(_:)),
+            #selector(addSubtitleFile(_:)), #selector(subtitleEarlier(_:)), #selector(subtitleLater(_:)),
+            #selector(resetSubtitleDelay(_:)), #selector(rotateVideo(_:)), #selector(audioEarlier(_:)),
+            #selector(audioLater(_:)), #selector(resetAudioDelay(_:)):
             return engine.hasMedia
         default:
             return true

@@ -12,11 +12,16 @@ final class ThumbnailService {
         let completion: (NSImage?) -> Void
     }
 
-    private var memoryCache: [String: NSImage] = [:]
-    private var memoryOrder: [String] = []
-    private let memoryLimit = 120
+    private let memoryCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.totalCostLimit = 24 * 1024 * 1024
+        return cache
+    }()
+    /// Files that produced no picture (audio-only, unsupported), so hovering doesn't retry them.
+    private var failedKeys = Set<String>()
     private var isWorking = false
     private var pending: Request?
+    private var debounce: DispatchWorkItem?
 
     private init() {
         Task.detached(priority: .background) {
@@ -32,12 +37,21 @@ final class ThumbnailService {
         let step = max(2, duration / 200)
         let bucket = Int((time / step).rounded() * step)
         let key = cacheKey(url: url, bucket: bucket)
-        if let image = memoryCache[key] {
+        if let image = memoryCache.object(forKey: key as NSString) {
             completion(image)
             return
         }
+        if failedKeys.contains(cacheKey(url: url, bucket: -1)) {
+            completion(nil)
+            return
+        }
+        // Only the latest hover position matters; tell the replaced request it won't get an image.
+        pending?.completion(nil)
         pending = Request(url: url, bucket: bucket, completion: completion)
-        runNext()
+        debounce?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.runNext() }
+        debounce = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)
     }
 
     private func runNext() {
@@ -53,6 +67,8 @@ final class ThumbnailService {
             let image = data.flatMap(NSImage.init(data:))
             if let image {
                 self.store(image, for: key)
+            } else {
+                self.failedKeys.insert(self.cacheKey(url: url, bucket: -1))
             }
             request.completion(image)
             self.isWorking = false
@@ -67,16 +83,16 @@ final class ThumbnailService {
     }
 
     private func store(_ image: NSImage, for key: String) {
-        memoryCache[key] = image
-        memoryOrder.append(key)
-        if memoryOrder.count > memoryLimit {
-            let evicted = memoryOrder.removeFirst()
-            memoryCache[evicted] = nil
-        }
+        let cost = Int(image.size.width * image.size.height * 4)
+        memoryCache.setObject(image, forKey: key as NSString, cost: cost)
     }
 
     private func cacheKey(url: URL, bucket: Int) -> String {
-        let digest = SHA256.hash(data: Data(url.path.utf8))
+        // Size and modification date are part of the key so a replaced file gets fresh previews.
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+        let modified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        let digest = SHA256.hash(data: Data("\(url.path)|\(size)|\(Int(modified))".utf8))
         let hex = digest.prefix(12).map { String(format: "%02x", $0) }.joined()
         return "\(hex)-\(bucket)"
     }
@@ -105,6 +121,20 @@ final class ThumbnailService {
             ("aid", "no"),
             ("sid", "no"),
             ("hwdec", "no"),
+            ("vd-lavc-threads", "2"),
+            ("vd-lavc-skiploopfilter", "all"),
+            ("cache", "no"),
+            ("demuxer-max-bytes", "8MiB"),
+            ("sub-auto", "no"),
+            ("audio-file-auto", "no"),
+            ("load-stats-overlay", "no"),
+            ("load-console", "no"),
+            ("load-auto-profiles", "no"),
+            ("load-select", "no"),
+            ("load-positioning", "no"),
+            ("load-commands", "no"),
+            ("load-context-menu", "no"),
+            ("osc", "no"),
             ("hr-seek", "no"),
             ("frames", "1"),
             ("start", String(max(0, time))),
@@ -141,10 +171,12 @@ final class ThumbnailService {
     nonisolated private static func pruneDiskCache() {
         let directory = AppPaths.thumbnailCache
         let keys: [URLResourceKey] = [.contentAccessDateKey, .fileSizeKey]
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: keys
-        ) else { return }
+        guard
+            let files = try? FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: keys
+            )
+        else { return }
         let cutoff = Date().addingTimeInterval(-14 * 86_400)
         for file in files {
             let values = try? file.resourceValues(forKeys: Set(keys))

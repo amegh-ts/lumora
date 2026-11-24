@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class MainWindowController: NSWindowController, NSWindowDelegate {
-    static let mediaExtensions: Set<String> = [
+    nonisolated static let mediaExtensions: Set<String> = [
         "mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "mpg", "mpeg", "m2ts", "mts", "ts",
         "3gp", "ogv", "vob", "rm", "rmvb", "asf", "divx", "f4v", "hevc", "y4m",
         "mp3", "m4a", "aac", "flac", "wav", "ogg", "opus", "wma", "alac", "aiff", "aif", "ape", "dts", "ac3", "mka",
@@ -15,6 +15,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// Only the first player window can own this name; extra windows cascade from the existing one.
     static let frameAutosaveName = "LumoraPlayerWindow"
 
+    private static var debugRenderer: VideoRenderer? {
+        #if DEBUG
+            return ProcessInfo.processInfo.environment["LUMORA_RENDERER"].flatMap(VideoRenderer.init(rawValue:))
+        #else
+            return nil
+        #endif
+    }
+
     private let engine: PlaybackEngine
     private let playlist = PlaylistStore()
     private let settings = SettingsStore.shared
@@ -25,7 +33,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         engine = PlaybackEngine(
             ytdlPath: SettingsStore.shared.ytDLPPath,
             hardwareDecoding: SettingsStore.shared.hardwareDecoding,
-            renderer: SettingsStore.shared.renderer
+            renderer: Self.debugRenderer ?? SettingsStore.shared.renderer,
+            streamHeightCap: SettingsStore.shared.streamQuality.maxHeight
         )
         playerViewController = PlayerViewController(
             engine: engine,
@@ -63,6 +72,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func showWindow(_ sender: Any?) {
+        if DebugMode.background {
+            window?.orderBack(nil)
+            return
+        }
+        super.showWindow(sender)
+    }
+
     func windowWillEnterFullScreen(_ notification: Notification) {
         playerViewController.leaveMiniPlayerIfNeeded()
     }
@@ -81,16 +98,74 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if !subtitles.isEmpty {
             playerViewController.addSubtitles(subtitles, forNextFile: !media.isEmpty)
         }
-        let items = expand(media).map { PlaybackItem(url: $0) }
-        guard !items.isEmpty else { return }
-        let firstNewIndex = playlist.items.count
-        playlist.add(items)
-        playlist.select(at: firstNewIndex)
-        playCurrent()
+        guard !media.isEmpty else { return }
+        // Folders can hold thousands of files (or sit on a slow network share): list them off the main thread.
+        Task { [weak self] in
+            let expanded = await Self.expandInBackground(media)
+            guard let self else { return }
+            if expanded.isEmpty {
+                self.reportMissing(media)
+                return
+            }
+            let missing = media.filter { $0.isFileURL && !FileManager.default.fileExists(atPath: $0.path) }
+            if !missing.isEmpty {
+                self.reportMissing(missing)
+            }
+            // Reopening something already in the playlist selects it instead of adding a duplicate.
+            if expanded.count == 1, let existing = self.playlist.index(of: expanded[0]) {
+                self.playlist.select(at: existing)
+                self.playCurrent()
+                return
+            }
+            let firstNewIndex = self.playlist.items.count
+            self.playlist.add(expanded.map { PlaybackItem(url: $0) })
+            self.playlist.select(at: firstNewIndex)
+            self.playCurrent()
+        }
+    }
+
+    private static func expandInBackground(_ urls: [URL]) async -> [URL] {
+        await Task.detached(priority: .userInitiated) {
+            MainWindowController.expandFiles(urls)
+        }.value
+    }
+
+    private func showInvalidURL(_ text: String) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = text.isEmpty ? "Enter a link to play" : "That doesn't look like a playable link"
+        alert.informativeText = "Use a web or stream address that starts with https://, http://, rtsp:// or similar."
+        alert.addButton(withTitle: "Try Again")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            MainActor.assumeIsolated { self?.promptForURL() }
+        }
+    }
+
+    /// Recent items, Library and Finder can point at files that were moved or deleted.
+    private func reportMissing(_ urls: [URL]) {
+        guard let window, let first = urls.first else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText =
+            urls.count == 1
+            ? "“\(first.deletingPathExtension().lastPathComponent)” couldn't be found"
+            : "\(urls.count) items couldn't be found"
+        alert.informativeText = "It may have been moved, renamed or deleted, or its drive isn't connected."
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Remove from Recents")
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertSecondButtonReturn else { return }
+            MainActor.assumeIsolated {
+                urls.forEach { LibraryStore.shared.remove(url: $0) }
+            }
+        }
     }
 
     func enqueue(_ urls: [URL]) {
-        let items = expand(urls).map { PlaybackItem(url: $0) }
+        let items = Self.expandFiles(urls).map { PlaybackItem(url: $0) }
         guard !items.isEmpty else { return }
         let wasEmpty = playlist.items.isEmpty
         playlist.add(items)
@@ -114,7 +189,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             guard response == .alertFirstButtonReturn else { return }
             let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             MainActor.assumeIsolated {
-                guard let url = URL(string: text), url.scheme != nil else { return }
+                guard let url = URL(string: text), let scheme = url.scheme?.lowercased(),
+                    ["http", "https", "rtsp", "rtmp", "rtmps", "mms", "ftp", "smb", "udp", "rtp", "srt"].contains(scheme)
+                else {
+                    self?.showInvalidURL(text)
+                    return
+                }
                 self?.open([url])
             }
         }
@@ -122,6 +202,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func playCurrent() {
         guard let item = playlist.current else { return }
+        playerViewController.saveProgress(force: true)
         let record = library.record(for: item.url)
         var resume: TimeInterval = 0
         if settings.rememberLastPosition, let record, !record.watched {
@@ -149,7 +230,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         playCurrent()
     }
 
-    private func expand(_ urls: [URL]) -> [URL] {
+    nonisolated static func expandFiles(_ urls: [URL]) -> [URL] {
         var result: [URL] = []
         for url in urls {
             guard url.isFileURL else {
@@ -166,20 +247,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 )
                 var found: [URL] = []
                 while let file = enumerator?.nextObject() as? URL {
-                    if isMedia(file) {
+                    if Self.isMedia(file) {
                         found.append(file)
                     }
                 }
                 found.sort { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
                 result.append(contentsOf: found)
-            } else if isMedia(url) || !SubtitleService.isSubtitleFile(url) {
+            } else if Self.isMedia(url) || !SubtitleService.isSubtitleFile(url) {
                 result.append(url)
             }
         }
         return result
     }
 
-    private func isMedia(_ url: URL) -> Bool {
+    nonisolated private static func isMedia(_ url: URL) -> Bool {
         let ext = url.pathExtension.lowercased()
         if Self.mediaExtensions.contains(ext) {
             return true

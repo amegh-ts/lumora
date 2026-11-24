@@ -23,6 +23,7 @@ final class PlaylistStore: ObservableObject {
     }
 
     func clear() {
+        shuffleHistory.removeAll()
         items.removeAll()
         currentIndex = nil
     }
@@ -45,6 +46,7 @@ final class PlaylistStore: ObservableObject {
     func remove(at index: Int) {
         guard items.indices.contains(index) else { return }
         items.remove(at: index)
+        shuffleHistory = shuffleHistory.compactMap { $0 == index ? nil : ($0 > index ? $0 - 1 : $0) }
         guard let currentIndex else { return }
         if index < currentIndex {
             self.currentIndex = currentIndex - 1
@@ -72,6 +74,10 @@ final class PlaylistStore: ObservableObject {
         currentIndex = index
     }
 
+    /// Items already played in this shuffle pass, so Previous goes back through what you saw
+    /// and a pass ends once every item has played (unless Repeat All is on).
+    private var shuffleHistory: [Int] = []
+
     func next(auto: Bool = false) -> PlaybackItem? {
         guard !items.isEmpty else { return nil }
         guard let currentIndex else {
@@ -82,10 +88,18 @@ final class PlaylistStore: ObservableObject {
             return items[currentIndex]
         }
         if shuffle && items.count > 1 {
-            var candidate = currentIndex
-            while candidate == currentIndex {
-                candidate = Int.random(in: 0..<items.count)
+            if shuffleHistory.last != currentIndex {
+                shuffleHistory.append(currentIndex)
             }
+            var remaining = Set(items.indices).subtracting(shuffleHistory)
+            if remaining.isEmpty {
+                if auto && repeatMode == .off {
+                    return nil
+                }
+                shuffleHistory = [currentIndex]
+                remaining = Set(items.indices).subtracting([currentIndex])
+            }
+            guard let candidate = remaining.randomElement() else { return nil }
             self.currentIndex = candidate
             return items[candidate]
         }
@@ -107,6 +121,10 @@ final class PlaylistStore: ObservableObject {
             self.currentIndex = 0
             return items[0]
         }
+        if shuffle, let last = shuffleHistory.popLast(), items.indices.contains(last), last != currentIndex {
+            self.currentIndex = last
+            return items[last]
+        }
         let candidate = currentIndex - 1
         if candidate >= 0 {
             self.currentIndex = candidate
@@ -118,5 +136,9 @@ final class PlaylistStore: ObservableObject {
         }
         self.currentIndex = 0
         return items[0]
+    }
+
+    func index(of url: URL) -> Int? {
+        items.firstIndex { $0.url == url }
     }
 }

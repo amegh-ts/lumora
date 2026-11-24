@@ -14,9 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if controllers.isEmpty {
             _ = newController()
         }
-        NSApp.activate(ignoringOtherApps: true)
+        Self.activateApp()
         #if DEBUG
-        DebugHarness.run { [weak self] urls in self?.activeController().open(urls) }
+            DebugHarness.run { [weak self] urls in self?.activeController().open(urls) }
         #endif
         Updater.shared.start(settings: SettingsStore.shared)
     }
@@ -34,10 +34,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         #if DEBUG
-        FileHandle.standardError.write("[debug] open urls=\(urls.map(\.lastPathComponent)) controllers=\(controllers.count) key=\(NSApp.keyWindow != nil)\n".data(using: .utf8)!)
+            FileHandle.standardError.write(
+                "[debug] open urls=\(urls.map(\.lastPathComponent)) controllers=\(controllers.count) key=\(NSApp.keyWindow != nil)\n".data(using: .utf8)!)
         #endif
         activeController().open(urls)
-        NSApp.activate(ignoringOtherApps: true)
+        Self.activateApp()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -45,6 +46,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.close()
         }
         SettingsStore.shared.save()
+        LibraryStore.shared.flush()
+        ConverterService.cancelActive()
         guard PlaybackEngine.pendingShutdowns > 0 else { return .terminateNow }
         quitObserver = NotificationCenter.default.addObserver(forName: .lumoraEnginesStopped, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.finishQuit() }
@@ -72,17 +75,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         #if DEBUG
-        FileHandle.standardError.write("[debug] new player window (total \(controllers.count + 1))\n".data(using: .utf8)!)
+            FileHandle.standardError.write("[debug] new player window (total \(controllers.count + 1))\n".data(using: .utf8)!)
         #endif
         controller.onClose = { [weak self] closed in
             #if DEBUG
-            FileHandle.standardError.write("[debug] player window closed\n".data(using: .utf8)!)
+                FileHandle.standardError.write("[debug] player window closed\n".data(using: .utf8)!)
             #endif
             self?.controllers.removeAll { $0 === closed }
         }
         controllers.append(controller)
         controller.showWindow(nil)
         return controller
+    }
+
+    /// Brings Lumora forward, except in DEBUG background test runs (LUMORA_BACKGROUND=1).
+    static func activateApp() {
+        if DebugMode.background { return }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func openInActivePlayer(_ urls: [URL]) {
+        activeController().open(urls)
+        Self.activateApp()
     }
 
     private func activeController() -> MainWindowController {
@@ -107,17 +121,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func showAudioSettings(_ sender: Any?) {
         SettingsWindowController.shared.show(pane: "Audio")
-        NSApp.activate(ignoringOtherApps: true)
+        Self.activateApp()
     }
 
     @objc func showVideoSettings(_ sender: Any?) {
         SettingsWindowController.shared.show(pane: "Video")
-        NSApp.activate(ignoringOtherApps: true)
+        Self.activateApp()
     }
 
     @objc func showSubtitleSettings(_ sender: Any?) {
         SettingsWindowController.shared.show(pane: "Subtitles")
-        NSApp.activate(ignoringOtherApps: true)
+        Self.activateApp()
     }
 
     @objc func openProjectPage(_ sender: Any?) {
@@ -134,7 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func showSettings(_ sender: Any?) {
         SettingsWindowController.shared.showWindow(sender)
-        NSApp.activate(ignoringOtherApps: true)
+        Self.activateApp()
     }
 
     @objc func newPlayerWindow(_ sender: Any?) {
@@ -163,17 +177,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func showLibrary(_ sender: Any?) {
         LibraryWindowController.shared.showWindow(sender)
-        NSApp.activate(ignoringOtherApps: true)
+        Self.activateApp()
     }
 
     @objc func searchSubtitles(_ sender: Any?) {
         SubtitleSearchWindowController.shared.showWindow(sender)
-        NSApp.activate(ignoringOtherApps: true)
+        Self.activateApp()
     }
 
     @objc func convertMedia(_ sender: Any?) {
         ConverterWindowController.shared.showWindow(sender)
-        NSApp.activate(ignoringOtherApps: true)
+        Self.activateApp()
     }
 
     @objc func checkForUpdates(_ sender: Any?) {
@@ -184,20 +198,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.messageText = "Keyboard Shortcuts"
         alert.informativeText = """
-        Space or K — play / pause
-        ← / → — seek 10 s  (⇧ 3 s, ⌥ 60 s)
-        ↑ / ↓ — volume
-        F or double-click — full screen;  Esc — exit
-        [ / ] — slower / faster;  = — normal speed
-        , / . — previous / next frame
-        L — A-B loop;  B — bookmark
-        A — next audio track;  T — next subtitle
-        Z / X — subtitles earlier / later
-        M — mute;  S — screenshot;  P — playlist
-        ⌘← / ⌘→ — previous / next item
-        ⌥⌘M — mini player;  ⌥⌘T — keep on top
-        Scroll — volume (vertical), seek (horizontal)
-        """
+            Space or K — play / pause
+            ← / → — seek 10 s  (⇧ 3 s, ⌥ 60 s)
+            , / . — previous / next frame
+            [ / ] — slower / faster;  = — normal speed
+            L — A-B loop;  B — bookmark;  N or ⌘→ — next item
+            ↑ / ↓ — volume;  M — mute;  A — next audio track
+            - / ⇧= — audio earlier / later
+            T — next subtitle;  Z / X — subtitles earlier / later
+            ⌥⌘+ / ⌥⌘- — bigger / smaller subtitles
+            F or double-click — full screen;  Esc — exit
+            ⇧⌘S — screenshot;  ⌥⌘R — rotate
+            ⌥⌘M — mini player;  ⌥⌘T — keep on top
+            P — playlist;  ⇧⌘L — library;  ⌘U — open URL
+            Scroll — volume (vertical), seek (horizontal)
+
+            Full list: Help → Lumora on GitHub → docs/KEYBOARD_SHORTCUTS.md
+            """
         alert.addButton(withTitle: "OK")
         alert.runModal()
     }

@@ -1,54 +1,62 @@
 # Keyboard shortcuts
 
-## Application menu
+Single-key shortcuts work while a player window is focused and you're not typing in a text field.
+Every shortcut is also listed next to its command in the menu bar.
 
-| Shortcut | Action |
+## Playback
+| Key | Action |
 |---|---|
-| `Cmd+,` | Settings |
-| `Cmd+N` | New Player Window |
-| `Cmd+O` | Open files |
-| `Cmd+U` | Open Network Stream |
-| `Cmd+W` | Close window |
-| `Cmd+H` | Hide Lumora |
-| `Cmd+M` | Minimize window |
-| `Cmd+Q` | Quit Lumora |
-| `Cmd+?` | Show in-app shortcut help |
+| Space / K | Play / pause |
+| ← / → | Back / forward 10 s (⇧ 3 s) |
+| ⌥← / ⌥→ | Back / forward 1 min |
+| , / . | Previous / next frame |
+| [ / ] | Slower / faster |
+| = | Normal speed |
+| L | A-B loop (start → end → clear) |
+| B | Add bookmark |
+| ⌘← / ⌘→ | Previous / next item |
+| N | Next item |
+| ⌘. | Stop |
 
-## Player
-
-| Shortcut | Action |
+## Audio
+| Key | Action |
 |---|---|
-| `Space` | Play/pause |
-| `Left` | Seek back 10 seconds |
-| `Right` | Seek forward 10 seconds |
-| `Option+Left` | Seek back 60 seconds |
-| `Option+Right` | Seek forward 60 seconds |
-| `Up` | Volume up 5% |
-| `Down` | Volume down 5% |
-| `F` | Toggle full screen |
-| `P` | Toggle Picture in Picture |
-| `M` | Toggle mute |
-| `S` | Take screenshot |
-| `B` | Add bookmark at current time |
-| `L` | Toggle playlist sidebar |
-| `T` | Cycle subtitle options |
-| `R` | Cycle repeat mode |
-| `C` | Show/hide controls |
-| `[` | Previous playlist item |
-| `]` | Next playlist item |
-| `.` | Stop playback |
+| ↑ / ↓ | Volume up / down |
+| M | Mute |
+| A | Next audio track |
+| - / ⇧= | Audio earlier / later (0.1 s) |
 
-`Cmd` combinations are left to the application menu and are not handled by the player view.
-
-## Pointer and trackpad
-
-| Gesture | Action |
+## Subtitles
+| Key | Action |
 |---|---|
-| Double-click video | Toggle full screen |
-| Single-click video | Show controls / make view first responder |
-| Hover seek bar | Show thumbnail preview |
-| Vertical scroll over video | Adjust volume |
-| Horizontal scroll over video | Seek |
-| Drag files into player | Add and play media |
+| T / V | Next subtitle track |
+| Z / X | Subtitles earlier / later (0.1 s, current file) |
+| ⌥⌘+ / ⌥⌘- | Bigger / smaller subtitles |
 
-Shortcuts are hardcoded in `AppDelegate` and `PlayerViewController`; there is no rebinding UI yet.
+## Video and window
+| Key | Action |
+|---|---|
+| F, double-click, ⌃⌘F | Full screen |
+| Esc | Leave full screen or mini player |
+| ⇧⌘S | Screenshot |
+| ⌥⌘R | Rotate 90° |
+| ⌥⌘M | Mini player |
+| ⌥⌘T | Keep on top |
+| P | Show / hide playlist |
+| ⇧⌘L | Library |
+
+## App
+| Key | Action |
+|---|---|
+| ⌘O | Open file or folder |
+| ⌘U | Open URL |
+| ⌘N | New player window |
+| ⌘, | Settings |
+| ⌘/ | Keyboard shortcuts |
+
+## Mouse and trackpad
+- Click the video: play / pause. Double-click: full screen.
+- Scroll up/down: volume. Scroll left/right: seek.
+- Drag the video to move the window.
+- Right-click the video: playback, speed, tracks and more.
+- Click the remaining time to switch between remaining and total time.

@@ -10,6 +10,7 @@ final class NowPlayingService {
     static let skipInterval: TimeInterval = 10
 
     private weak var active: PlayerViewController?
+    private let players = NSHashTable<PlayerViewController>.weakObjects()
     private var artworkToken = 0
     private var artworkItemID: UUID?
     private var artwork: MPMediaItemArtwork?
@@ -25,6 +26,7 @@ final class NowPlayingService {
 
     func playerDidStartPlaying(_ player: PlayerViewController) {
         installCommandsIfNeeded()
+        players.add(player)
         if active !== player {
             active = player
             artwork = nil
@@ -49,10 +51,18 @@ final class NowPlayingService {
         }
     }
 
+    /// Hands the controls to another window that's still playing instead of dropping them.
     func playerDidClose(_ player: PlayerViewController) {
+        players.remove(player)
         guard active === player else { return }
-        active = nil
-        clear()
+        active = players.allObjects.first { $0.engine.isPlaying && $0.engine.isActive }
+        artwork = nil
+        artworkItemID = nil
+        if active == nil {
+            clear()
+        } else {
+            publish(force: true)
+        }
     }
 
     // MARK: - Publishing
@@ -119,7 +129,12 @@ final class NowPlayingService {
         artworkToken += 1
         let token = artworkToken
         ThumbnailService.shared.request(url: item.url, time: duration * 0.1, duration: duration) { [weak self] image in
-            guard let self, self.artworkToken == token, let image else { return }
+            guard let self, self.artworkToken == token else { return }
+            guard let image else {
+                // Superseded by a seek-bar preview or no picture available: allow a later retry.
+                self.artworkItemID = nil
+                return
+            }
             self.artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
             self.publish(force: true)
         }

@@ -1,0 +1,91 @@
+name: Release
+
+# After a merge to main: build the LGPL libraries, the app and the DMG.
+# If Resources/Info.plist has a version without a tag yet, sign the update feed and publish
+# the GitHub release (tag vX.Y.Z, notes from release-notes/X.Y.Z.md, DMG + appcast.xml).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "v$VERSION is already released — building only."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "Will publish v$VERSION."
+          fi
+
+      - name: Install build dependencies
+        run: brew install pkg-config meson ninja dav1d libass libplacebo luajit uchardet little-cms2 libbluray zimg molten-vk vulkan-loader vulkan-headers
+
+      - name: Restore LGPL library cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build/deps/prefix
+            .build/deps/sparkle
+            .build/deps/src
+          key: lgpl-deps-${{ runner.os }}-${{ hashFiles('Scripts/build-deps.sh', 'Scripts/fetch-sparkle.sh', 'Scripts/patches/**') }}
+
+      - name: Build LGPL FFmpeg and libmpv
+        run: Scripts/build-deps.sh
+
+      - name: Build app and DMG
+        run: Scripts/make-dmg.sh
+
+      - name: Sign update feed
+        if: steps.version.outputs.publish == 'true'
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "::error::SPARKLE_PRIVATE_KEY secret is not set — cannot sign the update feed."
+            exit 1
+          fi
+          KEY_FILE="$RUNNER_TEMP/sparkle-key"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$KEY_FILE"
+          SPARKLE_KEY_FILE="$KEY_FILE" Scripts/make-appcast.sh
+          rm -f "$KEY_FILE"
+
+      - name: Publish GitHub release
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          NOTES="release-notes/$VERSION.md"
+          [ -s "$NOTES" ] || { echo "::error::$NOTES is missing"; exit 1; }
+          gh release create "v$VERSION" \
+            --target "$GITHUB_SHA" \
+            --title "Lumora $VERSION" \
+            --notes-file "$NOTES" \
+            "dist/Lumora-$VERSION.dmg" dist/appcast.xml
+
+      - name: Upload DMG (build only)
+        if: steps.version.outputs.publish != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lumora-dmg
+          path: dist/*.dmg

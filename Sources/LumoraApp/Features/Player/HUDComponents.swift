@@ -12,24 +12,15 @@ enum HUD {
         return NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(configuration)
     }
 
-    static func panel(cornerRadius: CGFloat) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .hudWindow
-        view.blendingMode = .withinWindow
-        view.state = .active
-        view.appearance = NSAppearance(named: .vibrantDark)
-        view.wantsLayer = true
-        view.layer?.cornerRadius = cornerRadius
-        view.layer?.cornerCurve = .continuous
-        view.layer?.masksToBounds = true
-        view.layer?.borderWidth = 0.5
-        view.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
-        return view
+    /// `.glass` only for the main control bar; everything else uses the cheap `.plain` tint.
+    static func panel(cornerRadius: CGFloat, style: HUDPanel.Style = .plain) -> HUDPanel {
+        HUDPanel(cornerRadius: cornerRadius, style: style)
     }
 
     static func label(size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = primaryText, monospaced: Bool = false) -> NSTextField {
         let field = NSTextField(labelWithString: "")
-        field.font = monospaced
+        field.font =
+            monospaced
             ? .monospacedDigitSystemFont(ofSize: size, weight: weight)
             : .systemFont(ofSize: size, weight: weight)
         field.textColor = color
@@ -37,6 +28,77 @@ enum HUD {
         field.translatesAutoresizingMaskIntoConstraints = false
         return field
     }
+}
+
+/// Floating panel background. Add subviews to `content`.
+/// - `.glass`: Liquid Glass (NSGlassEffectView) on macOS 26+, HUD blur before. Used only by the
+///   control bar, the one surface that sits on moving video for long.
+/// - `.plain`: a flat translucent tint with no blur or glass — no extra compositing work.
+@MainActor
+final class HUDPanel: NSView {
+    enum Style {
+        case glass
+        case plain
+    }
+
+    let content = NSView()
+
+    init(cornerRadius: CGFloat, style: Style) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        appearance = NSAppearance(named: .vibrantDark)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        let background: NSView
+        if style == .plain {
+            let tint = NSView()
+            tint.wantsLayer = true
+            tint.layer?.backgroundColor = NSColor(white: 0.08, alpha: 0.82).cgColor
+            tint.layer?.cornerRadius = cornerRadius
+            tint.layer?.cornerCurve = .continuous
+            tint.layer?.borderWidth = 0.5
+            tint.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
+            tint.addSubview(content)
+            background = tint
+        } else if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            glass.cornerRadius = cornerRadius
+            glass.style = .regular
+            glass.tintColor = NSColor.black.withAlphaComponent(0.35)
+            glass.contentView = content
+            background = glass
+        } else {
+            let blur = NSVisualEffectView()
+            blur.material = .hudWindow
+            blur.blendingMode = .withinWindow
+            blur.state = .active
+            blur.wantsLayer = true
+            blur.layer?.cornerRadius = cornerRadius
+            blur.layer?.cornerCurve = .continuous
+            blur.layer?.masksToBounds = true
+            blur.layer?.borderWidth = 0.5
+            blur.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
+            blur.addSubview(content)
+            background = blur
+        }
+        background.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(background)
+        NSLayoutConstraint.activate([
+            background.leadingAnchor.constraint(equalTo: leadingAnchor),
+            background.trailingAnchor.constraint(equalTo: trailingAnchor),
+            background.topAnchor.constraint(equalTo: topAnchor),
+            background.bottomAnchor.constraint(equalTo: bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor),
+            content.topAnchor.constraint(equalTo: topAnchor),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var mouseDownCanMoveWindow: Bool { false }
 }
 
 final class PassthroughVisualEffectView: NSVisualEffectView {
@@ -106,7 +168,8 @@ final class HUDButton: NSButton {
     }
 
     private func updateBackground() {
-        layer?.backgroundColor = isHovering && isEnabled
+        layer?.backgroundColor =
+            isHovering && isEnabled
             ? NSColor.white.withAlphaComponent(0.14).cgColor
             : NSColor.clear.cgColor
     }
@@ -210,7 +273,7 @@ final class OSDView: NSView {
         let stack = NSStackView(views: [iconView, label])
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
-        panel.addSubview(stack)
+        panel.content.addSubview(stack)
         NSLayoutConstraint.activate([
             panel.leadingAnchor.constraint(equalTo: leadingAnchor),
             panel.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -232,14 +295,30 @@ final class OSDView: NSView {
         nil
     }
 
+    private var currentSymbol: String?
+
     func show(_ text: String, symbol: String? = nil, duration: TimeInterval = 1.3) {
-        label.stringValue = text
-        iconView.image = symbol.flatMap { HUD.symbol($0, size: 14, weight: .semibold) }
-        iconView.isHidden = symbol == nil
         hideWorkItem?.cancel()
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.12
-            animator().alphaValue = 1
+        let alreadyShowing = alphaValue > 0.99
+        if label.stringValue != text {
+            label.stringValue = text
+        }
+        // Repeated messages (volume while scrolling) only move the hide deadline.
+        if symbol != currentSymbol {
+            currentSymbol = symbol
+            iconView.image = symbol.flatMap { HUD.symbol($0, size: 14, weight: .semibold) }
+            iconView.isHidden = symbol == nil
+        }
+        if !alreadyShowing {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.12
+                animator().alphaValue = 1
+            }
+            NSAccessibility.post(
+                element: NSApp as Any,
+                notification: .announcementRequested,
+                userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.medium.rawValue]
+            )
         }
         let work = DispatchWorkItem { [weak self] in
             NSAnimationContext.runAnimationGroup { context in
@@ -273,9 +352,9 @@ final class ThumbnailPreviewView: NSView {
         timeLabel.alignment = .center
         chapterLabel.alignment = .center
         addSubview(panel)
-        panel.addSubview(imageView)
-        panel.addSubview(timeLabel)
-        panel.addSubview(chapterLabel)
+        panel.content.addSubview(imageView)
+        panel.content.addSubview(timeLabel)
+        panel.content.addSubview(chapterLabel)
         imageHeight = imageView.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             panel.leadingAnchor.constraint(equalTo: leadingAnchor),

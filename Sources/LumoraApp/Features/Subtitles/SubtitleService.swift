@@ -16,7 +16,8 @@ enum SubtitleService {
             ext = "srt"
         }
         let directory = AppPaths.subtitleCache.standardizedFileURL
-        let url = directory
+        let url =
+            directory
             .appendingPathComponent("\(cleanLanguage)-\(UUID().uuidString.prefix(8))-\(baseName)")
             .appendingPathExtension(ext)
             .standardizedFileURL

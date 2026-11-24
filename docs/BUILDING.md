@@ -95,9 +95,37 @@ Back up the private key — losing it means existing installs can't verify futur
 
 Keep that file somewhere safe and out of the repository.
 
-## Releasing
+## CI and releasing
 
-1. Bump `CFBundleShortVersionString` and `CFBundleVersion` in `Resources/Info.plist`.
-2. Commit to `develop`, push, open a PR `develop` → `main` with release notes.
-3. After merging: `Scripts/make-dmg.sh`, `Scripts/make-appcast.sh`, tag `v<version>`, and create a GitHub
-   release with the notes, the DMG and `appcast.xml` attached.
+Two GitHub Actions workflows:
+
+| Workflow | Runs on | What it does |
+|---|---|---|
+| **PR check** (`.github/workflows/pr-check.yml`) | every pull request | `Scripts/pr-check.sh`: swift-format lint, plist/entitlement validity, script syntax, release metadata (version bump, build number, `release-notes/X.Y.Z.md`, tag not taken) and a debug compile against Homebrew libmpv. No app or DMG build — a few minutes. |
+| **Release** (`.github/workflows/release.yml`) | push to `main` (i.e. after a merge) | Builds the LGPL libraries (cached), the app and the DMG. If the version in `Resources/Info.plist` has no tag yet, signs the update feed with the `SPARKLE_PRIVATE_KEY` secret and publishes GitHub release `vX.Y.Z` with the notes, DMG and `appcast.xml`. Otherwise it only builds. |
+
+Run the PR check locally before pushing:
+
+```bash
+Scripts/pr-check.sh
+```
+
+Fix formatting with `swift format format -i -r Sources Package.swift`.
+
+### Shipping a release
+
+1. Bump `CFBundleShortVersionString` (x.y.z: z for fixes only, y for new features) and `CFBundleVersion` (+1) in
+   `Resources/Info.plist`.
+2. Write `release-notes/X.Y.Z.md`.
+3. Commit to `develop`, push, open a PR `develop` → `main`. The PR check must pass.
+4. Merge. The Release workflow publishes `vX.Y.Z`; existing installs are offered the update through Sparkle.
+
+### One-time setup: update signing key in CI
+
+The Release workflow needs the Sparkle private key as a repository secret:
+
+```bash
+.build/deps/sparkle/bin/generate_keys --account lumora -x /tmp/lumora-key.txt \
+  && gh secret set SPARKLE_PRIVATE_KEY -R amegh-ts/lumora < /tmp/lumora-key.txt \
+  && rm /tmp/lumora-key.txt
+```

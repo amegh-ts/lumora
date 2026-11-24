@@ -1,6 +1,7 @@
 import AppKit
-import Combine
 import CMPV
+import Combine
+import Darwin
 
 @MainActor
 final class PlaybackEngine: ObservableObject {
@@ -21,6 +22,8 @@ final class PlaybackEngine: ObservableObject {
     @Published private(set) var loopB: TimeInterval?
     @Published private(set) var videoSize: CGSize = .zero
     @Published private(set) var rotation = 0
+    /// Renditions of an online video (YouTube formats, HLS variants); empty for local files.
+    @Published private(set) var streamVariants: [StreamVariant] = []
 
     var selectedAudioTrackID: Int? { audioTracks.first { $0.isSelected }?.id }
     var selectedSubtitleTrackID: Int? { subtitleTracks.first { $0.isSelected }?.id }
@@ -33,13 +36,15 @@ final class PlaybackEngine: ObservableObject {
     var onScreenshot: ((URL?) -> Void)?
 
     nonisolated(unsafe) let handle: OpaquePointer
-    private let wakeupBox: WeakBox<PlaybackEngine>
+    private let wakeupBox: EngineWakeup
     private var isShutDown = false
     private var isPaused = false
     private var isRenderReady = false
     private(set) var renderer: VideoRenderer
     private var voConfigured = false
     private var pendingOpenGLSwitch = false
+    private var suspendedVideoID: Int?
+    var isVideoSuspended: Bool { suspendedVideoID != nil }
     var onRendererFailure: (() -> Void)?
     private var pendingLoad: [String]?
     private var isAtEnd = false
@@ -48,14 +53,19 @@ final class PlaybackEngine: ObservableObject {
 
     private static var mpvLogging: Bool {
         #if DEBUG
-        return ProcessInfo.processInfo.environment["LUMORA_MPV_LOG"] != nil
+            return ProcessInfo.processInfo.environment["LUMORA_MPV_LOG"] != nil
         #else
-        return false
+            return false
         #endif
     }
 
-    init(ytdlPath: String, hardwareDecoding: Bool, renderer: VideoRenderer) {
+    /// Height cap used when yt-dlp picks the starting format; nil means best available.
+    private(set) var streamHeightCap: Int?
+    private var currentEdition = -1
+
+    init(ytdlPath: String, hardwareDecoding: Bool, renderer: VideoRenderer, streamHeightCap: Int? = 1080) {
         self.renderer = renderer
+        self.streamHeightCap = streamHeightCap
         if renderer == .metal {
             Self.configureVulkanDriver()
         }
@@ -63,7 +73,7 @@ final class PlaybackEngine: ObservableObject {
             fatalError("libmpv could not be initialised")
         }
         handle = created
-        wakeupBox = WeakBox<PlaybackEngine>()
+        wakeupBox = EngineWakeup()
 
         let options: [(String, String)] = [
             ("config", "no"),
@@ -83,12 +93,30 @@ final class PlaybackEngine: ObservableObject {
             ("screenshot-format", "png"),
             ("screenshot-directory", AppPaths.screenshots.path),
             ("ytdl", "yes"),
-            ("ytdl-format", "bestvideo[height<=?2160]+bestaudio/best"),
-            ("script-opts", "ytdl_hook-ytdl_path=\(Self.safeToolPath(ytdlPath, fallback: "yt-dlp"))"),
+            ("ytdl-format", StreamQuality.ytdlFormat(maxHeight: streamHeightCap)),
+            // Web pages go straight to yt-dlp instead of failing an ffmpeg probe first; direct
+            // media links opt out per file in load().
+            (
+                "script-opts",
+                "ytdl_hook-ytdl_path=\(Self.safeToolPath(ytdlPath, fallback: "yt-dlp")),ytdl_hook-try_ytdl_first=yes"
+            ),
+            // One long HTTP download gets throttled by YouTube and many CDNs (~700 KB/s here);
+            // 10 MiB range requests on one kept-alive connection, as yt-dlp does, run at full speed.
+            ("stream-lavf-o", "request_size=10485760,multiple_requests=1"),
             ("load-scripts", "no"),
+            ("load-stats-overlay", "no"),
+            ("load-console", "no"),
+            ("load-auto-profiles", "no"),
+            ("load-select", "no"),
+            ("load-positioning", "no"),
+            ("load-commands", "no"),
+            ("load-context-menu", "no"),
+            ("gpu-shader-cache", "yes"),
+            ("gpu-shader-cache-dir", AppPaths.mpvCache.path),
+            ("icc-cache-dir", AppPaths.mpvCache.path),
             ("cache", "auto"),
-            ("demuxer-max-bytes", "150MiB"),
-            ("demuxer-max-back-bytes", "50MiB"),
+            ("demuxer-max-bytes", "96MiB"),
+            ("demuxer-max-back-bytes", "32MiB"),
             ("volume-max", "100"),
             ("audio-client-name", "Lumora"),
             ("hr-seek-framedrop", "yes"),
@@ -108,9 +136,21 @@ final class PlaybackEngine: ObservableObject {
         case .openGL:
             videoOptions = [("vo", "libmpv")]
         }
-        for (name, value) in options + videoOptions {
+        let testOptions: [(String, String)] = DebugMode.background ? [("force-render", "yes")] : []
+        for (name, value) in options + videoOptions + testOptions {
             MPV.setOption(handle, name, value)
         }
+        #if DEBUG
+            // LUMORA_MPV_OPTS="name=value;name=value" overrides options for experiments.
+            if let overrides = ProcessInfo.processInfo.environment["LUMORA_MPV_OPTS"] {
+                for pair in overrides.split(separator: ";") {
+                    let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+                    if parts.count == 2 {
+                        MPV.setOption(handle, parts[0], parts[1])
+                    }
+                }
+            }
+        #endif
         let status = mpv_initialize(handle)
         if status < 0 {
             fatalError("libmpv failed to start: \(MPV.errorString(status))")
@@ -133,7 +173,10 @@ final class PlaybackEngine: ObservableObject {
         observe("dheight", MPV_FORMAT_INT64)
         observe("video-rotate", MPV_FORMAT_INT64)
         observe("vo-configured", MPV_FORMAT_FLAG)
+        observe("edition-list", MPV_FORMAT_NODE)
+        observe("current-edition", MPV_FORMAT_INT64)
 
+        mpv_request_log_messages(handle, "error")
         let context = Unmanaged.passRetained(wakeupBox).toOpaque()
         mpv_set_wakeup_callback(handle, mpvWakeup, context)
     }
@@ -172,7 +215,7 @@ final class PlaybackEngine: ObservableObject {
                 mpv_terminate_destroy(handle)
             }
             if let pointer = UnsafeRawPointer(bitPattern: release) {
-                Unmanaged<WeakBox<PlaybackEngine>>.fromOpaque(pointer).release()
+                Unmanaged<EngineWakeup>.fromOpaque(pointer).release()
             }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
@@ -217,7 +260,7 @@ final class PlaybackEngine: ObservableObject {
             candidates.append(resources.appendingPathComponent("vulkan/icd.d/MoltenVK_icd.json").path)
         }
         #if DEBUG
-        candidates.append("/opt/homebrew/opt/molten-vk/etc/vulkan/icd.d/MoltenVK_icd.json")
+            candidates.append("/opt/homebrew/opt/molten-vk/etc/vulkan/icd.d/MoltenVK_icd.json")
         #endif
         if let path = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) {
             setenv("VK_DRIVER_FILES", path, 1)
@@ -235,12 +278,35 @@ final class PlaybackEngine: ObservableObject {
         chapters = []
         isAtEnd = false
         hasMedia = true
-        statusMessage = "Opening \(item.title)…"
+        streamVariants = []
         let target = item.url.isFileURL ? item.url.path : item.url.absoluteString
-        var args = ["loadfile", target, "replace", "-1"]
-        if resumeTime > 1 {
-            args.append("start=\(resumeTime)")
+        // Local files read ahead from disk on demand. Streams keep a large window both ways so
+        // ±10 s jumps land inside data that is already downloaded.
+        var fileOptions: [String]
+        if item.url.isFileURL {
+            statusMessage = "Opening \(item.title)…"
+            fileOptions = ["demuxer-max-bytes=32MiB", "demuxer-max-back-bytes=8MiB"]
+        } else {
+            let isDirectMedia = Self.isDirectMediaURL(item.url)
+            statusMessage = isDirectMedia ? "Connecting…" : "Fetching video from \(item.url.host ?? "the web")…"
+            fileOptions = [
+                "cache=yes", "cache-secs=120", "demuxer-max-bytes=128MiB", "demuxer-max-back-bytes=48MiB",
+                "demuxer-seekable-cache=yes"
+            ]
+            if isDirectMedia {
+                fileOptions.append("ytdl=no")
+            }
         }
+        if resumeTime > 1 {
+            fileOptions.append("start=\(resumeTime)")
+        }
+        let args = ["loadfile", target, "replace", "-1", fileOptions.joined(separator: ",")]
+        DebugTimeline.log("load \(item.url.isFileURL ? "file" : "url")")
+        resetPerFileState()
+        subtitleDelay = defaultSubtitleDelay
+        setProperty("sub-delay", String(subtitleDelay))
+        audioDelay = 0
+        setProperty("audio-delay", "0")
         if isRenderReady {
             command(args)
         } else {
@@ -250,12 +316,79 @@ final class PlaybackEngine: ObservableObject {
         onLoad?(item)
     }
 
+    /// mpv keeps these options across files; reset them so one file's choices don't leak into the
+    /// next (e.g. audio track 2 making the next file silent, an A-B loop or rotation carrying over).
+    private func resetPerFileState() {
+        if suspendedVideoID != nil {
+            suspendedVideoID = nil
+        }
+        setProperty("vid", "auto")
+        setProperty("aid", "auto")
+        setProperty("sid", "auto")
+        setProperty("ab-loop-a", "no")
+        setProperty("ab-loop-b", "no")
+        setProperty("video-rotate", "0")
+        setProperty("edition", "auto")
+    }
+
+    private static let directMediaExtensions: Set<String> = [
+        "mp4", "m4v", "mkv", "webm", "mov", "avi", "flv", "ts", "m2ts", "mts", "m3u8", "m3u", "mpd",
+        "mp3", "m4a", "aac", "flac", "ogg", "oga", "opus", "wav", "wma", "wmv", "mpg", "mpeg", "3gp"
+    ]
+
+    /// A link straight to a media file or playlist needs no yt-dlp lookup.
+    static func isDirectMediaURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return true }
+        return directMediaExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    /// Switches the current stream to another rendition in place; playback keeps its position.
+    func selectStreamVariant(_ id: Int) {
+        guard streamVariants.contains(where: { $0.id == id }) else { return }
+        if let variant = streamVariants.first(where: { $0.id == id }), variant.height > 0 {
+            streamHeightCap = variant.height
+            setProperty("ytdl-format", StreamQuality.ytdlFormat(maxHeight: variant.height))
+        }
+        setProperty("edition", String(id))
+    }
+
+    /// Default quality for online videos opened from now on.
+    func setStreamHeightCap(_ height: Int?) {
+        streamHeightCap = height
+        setProperty("ytdl-format", StreamQuality.ytdlFormat(maxHeight: height))
+    }
+
     func renderContextReady() {
         guard !isRenderReady else { return }
         isRenderReady = true
         if let pendingLoad {
             self.pendingLoad = nil
             command(pendingLoad)
+        }
+    }
+
+    /// Turns the video output off while nobody can see it (audio keeps playing). mpv then
+    /// destroys its renderer and GPU textures; `resumeVideo()` brings video back at the same spot.
+    func suspendVideo() {
+        // Without an audio track nothing would keep playback going, so leave video-only files alone.
+        guard hasMedia, suspendedVideoID == nil, !audioTracks.isEmpty,
+            let track = videoTracks.first(where: { $0.isSelected })
+        else { return }
+        suspendedVideoID = track.id
+        setProperty("vid", "no")
+        Self.releaseFreeMemory(after: 1.5)
+    }
+
+    func resumeVideo() {
+        guard let id = suspendedVideoID else { return }
+        suspendedVideoID = nil
+        setProperty("vid", String(id))
+    }
+
+    /// Hands freed malloc pages back to the system so the memory figure drops right away.
+    nonisolated static func releaseFreeMemory(after delay: TimeInterval = 0) {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) {
+            malloc_zone_pressure_relief(nil, 0)
         }
     }
 
@@ -287,6 +420,11 @@ final class PlaybackEngine: ObservableObject {
         videoTracks = []
         chapters = []
         statusMessage = ""
+        if suspendedVideoID != nil {
+            setProperty("vid", "auto")
+        }
+        suspendedVideoID = nil
+        Self.releaseFreeMemory(after: 1)
     }
 
     func seek(to time: TimeInterval, exact: Bool = true) {
@@ -299,6 +437,7 @@ final class PlaybackEngine: ObservableObject {
 
     func skip(_ seconds: TimeInterval) {
         guard hasMedia else { return }
+        isAtEnd = false
         command(["seek", String(seconds), "relative+exact"])
     }
 
@@ -323,6 +462,7 @@ final class PlaybackEngine: ObservableObject {
 
     func stepFrame(forward: Bool) {
         guard hasMedia else { return }
+        isAtEnd = false
         command([forward ? "frame-step" : "frame-back-step"])
     }
 
@@ -348,8 +488,26 @@ final class PlaybackEngine: ObservableObject {
         command(["sub-add", url.path, "select"])
     }
 
+    /// Delay for the current file only; reset to `defaultSubtitleDelay` whenever a file loads.
+    private(set) var subtitleDelay: TimeInterval = 0
+    var defaultSubtitleDelay: TimeInterval = 0
+
+    func adjustSubtitleDelay(by delta: TimeInterval?) {
+        let value = delta.map { ((subtitleDelay + $0) * 10).rounded() / 10 } ?? 0
+        subtitleDelay = min(max(value, -10), 10)
+        setProperty("sub-delay", String(subtitleDelay))
+    }
+
     func setSubtitleDelay(_ seconds: TimeInterval) {
         setProperty("sub-delay", String(seconds))
+    }
+
+    private(set) var audioDelay: TimeInterval = 0
+
+    func adjustAudioDelay(by delta: TimeInterval?) {
+        let value = delta.map { ((audioDelay + $0) * 10).rounded() / 10 } ?? 0
+        audioDelay = min(max(value, -10), 10)
+        setProperty("audio-delay", String(audioDelay))
     }
 
     func setAudioDelay(_ seconds: TimeInterval) {
@@ -395,7 +553,8 @@ final class PlaybackEngine: ObservableObject {
             setProperty("af", "")
             return
         }
-        let chain = active
+        let chain =
+            active
             .map { "equalizer=f=\($0.0):t=o:w=1:g=\(String(format: "%.1f", $0.1))" }
             .joined(separator: ",")
         setProperty("af", "lavfi=[\(chain)]")
@@ -405,21 +564,45 @@ final class PlaybackEngine: ObservableObject {
         guard hasMedia else { return }
         AppPaths.ensureDirectories()
         let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
         formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
         let title = Self.safeFilename(currentItem?.title ?? "Lumora")
         let url = AppPaths.screenshots.appendingPathComponent("\(title) \(formatter.string(from: Date())).png")
         nextReplyID += 1
         pendingScreenshots[nextReplyID] = url
-        command(["screenshot-to-file", url.path, includeSubtitles ? "subtitles" : "video"],
+        command(
+            ["screenshot-to-file", url.path, includeSubtitles ? "subtitles" : "video"],
             replyID: nextReplyID
         )
+    }
+
+    /// Turns mpv's terse error codes into a sentence people can act on.
+    private static func explain(_ code: Int32, isLocal: Bool) -> String {
+        switch mpv_error(rawValue: code) {
+        case MPV_ERROR_UNKNOWN_FORMAT:
+            return "The format isn't recognized or the file is damaged."
+        case MPV_ERROR_LOADING_FAILED:
+            return isLocal
+                ? "The file is missing, unreadable or damaged."
+                : "The stream couldn't be opened. Check the link and your connection."
+        case MPV_ERROR_NOTHING_TO_PLAY:
+            return "It contains no audio or video Lumora can play."
+        case MPV_ERROR_AO_INIT_FAILED:
+            return "No audio output device is available."
+        case MPV_ERROR_VO_INIT_FAILED:
+            return "The video output couldn't start."
+        default:
+            return "(\(MPV.errorString(code)))"
+        }
     }
 
     private static func safeToolPath(_ path: String, fallback: String) -> String {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("/"),
-              !trimmed.contains(","), !trimmed.contains("="),
-              FileManager.default.isExecutableFile(atPath: trimmed) else { return fallback }
+            !trimmed.contains(","), !trimmed.contains("="),
+            FileManager.default.isExecutableFile(atPath: trimmed)
+        else { return fallback }
         return trimmed
     }
 
@@ -453,7 +636,8 @@ final class PlaybackEngine: ObservableObject {
             let property = data.assumingMemoryBound(to: mpv_event_property.self).pointee
             handle(property: property)
         case MPV_EVENT_FILE_LOADED:
-            scheduleRendererCheck()
+            DebugTimeline.log("file loaded")
+            Self.releaseFreeMemory(after: 3)
             statusMessage = ""
             isAtEnd = false
             isPlaying = hasMedia && !isPaused
@@ -464,12 +648,15 @@ final class PlaybackEngine: ObservableObject {
             guard let data = event.data else { return }
             let endFile = data.assumingMemoryBound(to: mpv_event_end_file.self).pointee
             if endFile.reason == MPV_END_FILE_REASON_ERROR {
-                let message = MPV.errorString(endFile.error)
+                let title = currentItem?.title ?? "this file"
                 hasMedia = false
                 isPlaying = false
-                statusMessage = "Can't play this file: \(message)"
+                statusMessage = "Couldn't play “\(title)”. \(Self.explain(endFile.error, isLocal: currentItem?.url.isFileURL ?? true))"
                 onError?(statusMessage)
             }
+        case MPV_EVENT_LOG_MESSAGE:
+            guard let data = event.data else { return }
+            handleLog(data.assumingMemoryBound(to: mpv_event_log_message.self).pointee)
         case MPV_EVENT_COMMAND_REPLY:
             guard let url = pendingScreenshots.removeValue(forKey: event.reply_userdata) else { return }
             onScreenshot?(event.error >= 0 ? url : nil)
@@ -507,9 +694,12 @@ final class PlaybackEngine: ObservableObject {
                 isAtEnd = true
                 currentTime = duration
                 onFinish?()
+            } else if !reached {
+                isAtEnd = false
             }
         case "paused-for-cache":
             isBuffering = hasValue && property.data.assumingMemoryBound(to: Int32.self).pointee != 0
+            DebugTimeline.log(isBuffering ? "buffering start" : "buffering end")
         case "track-list":
             guard hasValue else { return }
             let node = property.data.assumingMemoryBound(to: mpv_node.self).pointee
@@ -537,21 +727,39 @@ final class PlaybackEngine: ObservableObject {
             videoSize.height = CGFloat(height)
         case "vo-configured":
             voConfigured = hasValue && property.data.assumingMemoryBound(to: Int32.self).pointee != 0
+            if voConfigured { DebugTimeline.log("video output ready (first frame)") }
         case "video-rotate":
             rotation = hasValue ? Int(property.data.assumingMemoryBound(to: Int64.self).pointee) : 0
+        case "edition-list":
+            guard hasValue, currentItem.map({ !$0.url.isFileURL }) == true else {
+                streamVariants = []
+                return
+            }
+            let node = property.data.assumingMemoryBound(to: mpv_node.self).pointee
+            let list = MPV.value(from: node) as? [Any] ?? []
+            streamVariants = list.compactMap { entry in
+                guard let map = entry as? [String: Any], let id = map.int("id"), let title = map.string("title") else { return nil }
+                return StreamVariant(id: id, title: title, isSelected: id == currentEdition)
+            }
+        case "current-edition":
+            currentEdition = hasValue ? Int(property.data.assumingMemoryBound(to: Int64.self).pointee) : -1
+            streamVariants = streamVariants.map { variant in
+                var copy = variant
+                copy.isSelected = variant.id == currentEdition
+                return copy
+            }
         default:
             break
         }
     }
 
-    private func scheduleRendererCheck() {
-        guard renderer == .metal else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-            guard let self, self.renderer == .metal, self.hasMedia, !self.isShutDown else { return }
-            // A failed video output makes mpv deselect the video track, so check for any video track.
-            if !self.videoTracks.isEmpty, !self.voConfigured {
-                self.onRendererFailure?()
-            }
+    /// Metal failure is detected from mpv's own error ("Error opening/initializing the selected
+    /// video_out") rather than a timeout, so slow streams never trigger a false fallback.
+    private func handleLog(_ message: mpv_event_log_message) {
+        guard renderer == .metal, !pendingOpenGLSwitch, let text = message.text else { return }
+        let line = String(cString: text)
+        if line.contains("selected video_out") || line.contains("suitable GPU context") {
+            onRendererFailure?()
         }
     }
 
@@ -561,9 +769,10 @@ final class PlaybackEngine: ObservableObject {
         var video: [MediaTrack] = []
         for entry in list {
             guard let map = entry as? [String: Any],
-                  let id = map.int("id"),
-                  let type = map.string("type"),
-                  let kind = TrackKind(rawValue: type) else { continue }
+                let id = map.int("id"),
+                let type = map.string("type"),
+                let kind = TrackKind(rawValue: type)
+            else { continue }
             let track = MediaTrack(
                 id: id,
                 kind: kind,
@@ -586,12 +795,33 @@ final class PlaybackEngine: ObservableObject {
     }
 }
 
-private func mpvWakeup(_ context: UnsafeMutableRawPointer?) {
-    guard let context else { return }
-    let box = Unmanaged<WeakBox<PlaybackEngine>>.fromOpaque(context).takeUnretainedValue()
-    DispatchQueue.main.async {
-        MainActor.assumeIsolated {
-            box.object?.drainEvents()
+/// mpv's wakeup callback can fire for every video frame; schedule at most one main-thread drain
+/// at a time, which then handles every queued event.
+final class EngineWakeup: @unchecked Sendable {
+    weak var object: PlaybackEngine?
+    private let lock = NSLock()
+    private var scheduled = false
+
+    func schedule() {
+        lock.lock()
+        if scheduled {
+            lock.unlock()
+            return
+        }
+        scheduled = true
+        lock.unlock()
+        DispatchQueue.main.async { [self] in
+            lock.lock()
+            scheduled = false
+            lock.unlock()
+            MainActor.assumeIsolated {
+                object?.drainEvents()
+            }
         }
     }
+}
+
+private func mpvWakeup(_ context: UnsafeMutableRawPointer?) {
+    guard let context else { return }
+    Unmanaged<EngineWakeup>.fromOpaque(context).takeUnretainedValue().schedule()
 }

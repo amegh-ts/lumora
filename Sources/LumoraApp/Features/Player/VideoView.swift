@@ -98,8 +98,8 @@ final class MPVVideoLayer: CAOpenGLLayer, @unchecked Sendable {
                 }
             }
             #if DEBUG
-            currentFBO = framebuffer
-            probe(width: viewport[2], height: viewport[3])
+                currentFBO = framebuffer
+                probe(width: viewport[2], height: viewport[3])
             #endif
         } else {
             glClearColor(0, 0, 0, 1)
@@ -109,22 +109,22 @@ final class MPVVideoLayer: CAOpenGLLayer, @unchecked Sendable {
     }
 
     #if DEBUG
-    private var probeCount = 0
-    private var currentFBO: GLint = 0
+        private var probeCount = 0
+        private var currentFBO: GLint = 0
 
-    private func probe(width: GLint, height: GLint) {
-        guard ProcessInfo.processInfo.environment["LUMORA_GL_PROBE"] != nil else { return }
-        probeCount += 1
-        guard probeCount % 30 == 0 else { return }
-        glBindFramebuffer(GLenum(GL_READ_FRAMEBUFFER), GLuint(currentFBO))
-        var samples: [String] = []
-        for (fx, fy) in [(0.25, 0.5), (0.5, 0.5), (0.75, 0.5), (0.5, 0.3), (0.5, 0.7)] {
-            var pixel = [UInt8](repeating: 0, count: 4)
-            glReadPixels(GLint(Double(width) * fx), GLint(Double(height) * fy), 1, 1, GLenum(GL_RGBA), GLenum(GL_UNSIGNED_BYTE), &pixel)
-            samples.append("\(pixel[0]),\(pixel[1]),\(pixel[2])")
+        private func probe(width: GLint, height: GLint) {
+            guard ProcessInfo.processInfo.environment["LUMORA_GL_PROBE"] != nil else { return }
+            probeCount += 1
+            guard probeCount % 30 == 0 else { return }
+            glBindFramebuffer(GLenum(GL_READ_FRAMEBUFFER), GLuint(currentFBO))
+            var samples: [String] = []
+            for (fx, fy) in [(0.25, 0.5), (0.5, 0.5), (0.75, 0.5), (0.5, 0.3), (0.5, 0.7)] {
+                var pixel = [UInt8](repeating: 0, count: 4)
+                glReadPixels(GLint(Double(width) * fx), GLint(Double(height) * fy), 1, 1, GLenum(GL_RGBA), GLenum(GL_UNSIGNED_BYTE), &pixel)
+                samples.append("\(pixel[0]),\(pixel[1]),\(pixel[2])")
+            }
+            print("[gl] fbo=\(currentFBO) frame=\(probeCount) size=\(width)x\(height) bounds=\(bounds.size) samples=\(samples)")
         }
-        print("[gl] fbo=\(currentFBO) frame=\(probeCount) size=\(width)x\(height) bounds=\(bounds.size) samples=\(samples)")
-    }
     #endif
 
     private func createRenderContext() {
@@ -157,13 +157,15 @@ final class MPVVideoLayer: CAOpenGLLayer, @unchecked Sendable {
         }
         let box = Unmanaged.passRetained(WeakBox(self))
         updateBox = box
-        mpv_render_context_set_update_callback(created, { context in
-            guard let context else { return }
-            let box = Unmanaged<WeakBox<MPVVideoLayer>>.fromOpaque(context).takeUnretainedValue()
-            DispatchQueue.main.async {
-                box.object?.setNeedsDisplay()
-            }
-        }, box.toOpaque())
+        mpv_render_context_set_update_callback(
+            created,
+            { context in
+                guard let context else { return }
+                let box = Unmanaged<WeakBox<MPVVideoLayer>>.fromOpaque(context).takeUnretainedValue()
+                DispatchQueue.main.async {
+                    box.object?.setNeedsDisplay()
+                }
+            }, box.toOpaque())
     }
 
     func tearDown() {

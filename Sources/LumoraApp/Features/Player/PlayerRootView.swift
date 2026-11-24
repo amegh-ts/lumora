@@ -139,8 +139,9 @@ final class PlayerRootView: NSView {
             urls.append(contentsOf: objects)
         }
         if urls.isEmpty,
-           let string = pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
-           let url = URL(string: string), url.scheme != nil {
+            let string = pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            let url = URL(string: string), url.scheme != nil
+        {
             urls.append(url)
         }
         guard !urls.isEmpty else { return false }

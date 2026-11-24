@@ -41,14 +41,22 @@ private final class LibraryViewController: NSViewController, NSTableViewDataSour
         scrollView.hasVerticalScroller = true
         view = scrollView
         configureTable()
-        cancellable = library.$records.sink { [weak self] _ in
-            self?.reload()
-        }
     }
 
+    /// Only listens for library changes while the window is open (progress is saved every few
+    /// seconds during playback), and reads the new value after it's been applied.
     override func viewWillAppear() {
         super.viewWillAppear()
         reload()
+        cancellable = library.$records
+            .receive(on: RunLoop.main)
+            .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.reload() }
+    }
+
+    override func viewDidDisappear() {
+        super.viewDidDisappear()
+        cancellable = nil
     }
 
     private func configureTable() {
@@ -82,12 +90,14 @@ private final class LibraryViewController: NSViewController, NSTableViewDataSour
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let identifier = tableColumn?.identifier ?? NSUserInterfaceItemIdentifier("title")
-        let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView
+        let cell =
+            tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView
             ?? makeCell(identifier: identifier)
         let record = records[row]
         switch identifier.rawValue {
         case "progress":
-            cell.textField?.stringValue = record.watched
+            cell.textField?.stringValue =
+                record.watched
                 ? "Watched"
                 : "\(TimeFormatter.string(record.resumeTime)) / \(TimeFormatter.string(record.duration))"
         case "date":
@@ -128,9 +138,7 @@ private final class LibraryViewController: NSViewController, NSTableViewDataSour
     @objc private func openSelected(_ sender: NSTableView) {
         let row = sender.clickedRow
         guard row >= 0, row < records.count else { return }
-        guard let controller = NSApplication.shared.windows
-            .compactMap({ $0.windowController as? MainWindowController })
-            .first else { return }
-        controller.open([records[row].url])
+        // Opens in the active player window, creating one if every player window was closed.
+        (NSApp.delegate as? AppDelegate)?.openInActivePlayer([records[row].url])
     }
 }

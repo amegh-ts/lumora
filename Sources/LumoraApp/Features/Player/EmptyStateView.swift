@@ -181,6 +181,21 @@ private final class RecentRowButton: NSView {
 
     override func mouseDown(with event: NSEvent) {}
 
+    override var acceptsFirstResponder: Bool { true }
+
+    override func accessibilityPerformPress() -> Bool {
+        onClick?()
+        return true
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 36 || event.keyCode == 49 {
+            onClick?()
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+
     override func mouseUp(with event: NSEvent) {
         if bounds.contains(convert(event.locationInWindow, from: nil)) {
             onClick?()

@@ -6,8 +6,9 @@ final class GuardedMainMenu: NSMenu {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.intersection([.command, .control]).isEmpty {
             guard let window = NSApp.keyWindow,
-                  window.windowController is MainWindowController,
-                  !(window.firstResponder is NSText) else { return false }
+                window.windowController is MainWindowController,
+                !(window.firstResponder is NSText)
+            else { return false }
         }
         return super.performKeyEquivalent(with: event)
     }
@@ -19,6 +20,13 @@ final class DynamicMenuFiller: NSObject, NSMenuDelegate {
 
     init(_ kind: DynamicMenu) {
         self.kind = kind
+    }
+
+    /// No shortcuts in here; tells AppKit not to rebuild this menu on every key press.
+    func menuHasKeyEquivalent(
+        _ menu: NSMenu, for event: NSEvent, target: AutoreleasingUnsafeMutablePointer<AnyObject?>, action: UnsafeMutablePointer<Selector?>
+    ) -> Bool {
+        false
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -40,6 +48,12 @@ final class RecentMenuFiller: NSObject, NSMenuDelegate {
 
     init(open: @escaping (URL) -> Void) {
         self.open = open
+    }
+
+    func menuHasKeyEquivalent(
+        _ menu: NSMenu, for event: NSEvent, target: AutoreleasingUnsafeMutablePointer<AnyObject?>, action: UnsafeMutablePointer<Selector?>
+    ) -> Bool {
+        false
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -174,6 +188,10 @@ enum MainMenuBuilder {
         dynamic(audio, "Audio Track", .audioTracks, symbol: "waveform")
         add(audio, "Next Audio Track", #selector(PlayerViewController.cycleAudio(_:)), "a", [])
         audio.addItem(.separator())
+        add(audio, "Audio Earlier (−0.1 s)", #selector(PlayerViewController.audioEarlier(_:)), "-", [])
+        add(audio, "Audio Later (+0.1 s)", #selector(PlayerViewController.audioLater(_:)), "=", [.shift])
+        add(audio, "Reset Audio Delay", #selector(PlayerViewController.resetAudioDelay(_:)))
+        audio.addItem(.separator())
         add(audio, "Equalizer…", #selector(AppDelegate.showAudioSettings(_:)), symbol: "slider.vertical.3")
 
         let subtitles = submenu(main, "Subtitles")
@@ -197,6 +215,7 @@ enum MainMenuBuilder {
         add(video, "Take Screenshot", #selector(PlayerViewController.takeScreenshot(_:)), "s", [.command, .shift], symbol: "camera")
         video.addItem(.separator())
         dynamic(video, "Video Size", .videoSize, symbol: "aspectratio")
+        dynamic(video, "Quality", .streamQuality, symbol: "sparkles.tv")
         add(video, "Rotate 90°", #selector(PlayerViewController.rotateVideo(_:)), "r", [.command, .option], symbol: "rotate.right")
         video.addItem(.separator())
         add(video, "Video Settings…", #selector(AppDelegate.showVideoSettings(_:)), symbol: "slider.horizontal.3")

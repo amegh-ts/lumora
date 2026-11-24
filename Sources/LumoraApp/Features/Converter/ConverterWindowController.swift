@@ -23,6 +23,9 @@ private final class ConverterViewController: NSViewController {
     private let settings: SettingsStore
     private var source: URL?
     private var destination: URL?
+    private var destinationConfirmed = false
+    private var isConverting = false
+    private weak var convertButton: NSButton?
     private var preset = ConverterService.presets[0]
 
     private let sourceField = NSTextField(labelWithString: "No file selected")
@@ -52,6 +55,7 @@ private final class ConverterViewController: NSViewController {
         let convertButton = NSButton(title: "Convert", target: self, action: #selector(convert(_:)))
         convertButton.bezelStyle = .rounded
         convertButton.keyEquivalent = "\r"
+        self.convertButton = convertButton
 
         statusField.font = .systemFont(ofSize: 11)
         statusField.textColor = .secondaryLabelColor
@@ -101,6 +105,7 @@ private final class ConverterViewController: NSViewController {
                 guard let self else { return }
                 self.source = url
                 self.destination = ConverterService.outputURL(for: url, preset: self.preset)
+                self.destinationConfirmed = false
                 self.sourceField.stringValue = url.lastPathComponent
                 self.outputField.stringValue = self.destination?.lastPathComponent ?? ""
                 self.statusField.stringValue = "Ready to convert."
@@ -115,6 +120,7 @@ private final class ConverterViewController: NSViewController {
             guard response == .OK, let url = panel.url else { return }
             Task { @MainActor in
                 self?.destination = url
+                self?.destinationConfirmed = true
                 self?.outputField.stringValue = url.lastPathComponent
             }
         }
@@ -126,23 +132,40 @@ private final class ConverterViewController: NSViewController {
         preset = ConverterService.presets[index]
         if let source {
             destination = ConverterService.outputURL(for: source, preset: preset)
+            destinationConfirmed = false
             outputField.stringValue = destination?.lastPathComponent ?? ""
         }
     }
 
     @objc private func convert(_ sender: Any) {
+        if isConverting {
+            ConverterService.cancelActive()
+            return
+        }
         guard let source, let destination else {
             statusField.stringValue = "Choose a source file first."
             return
         }
+        let ffmpeg = settings.ffmpegPath
+        if !ffmpeg.isEmpty, !FileManager.default.isExecutableFile(atPath: ffmpeg) {
+            statusField.stringValue = "ffmpeg wasn't found at \(ffmpeg). Install it (brew install ffmpeg) or set its location in Settings → Tools."
+            return
+        }
+        isConverting = true
+        convertButton?.title = "Cancel"
+        convertButton?.keyEquivalent = "\u{1b}"
         statusField.stringValue = "Converting…"
         Task { @MainActor in
             let message = await ConverterService.convert(
                 input: source,
                 output: destination,
                 preset: preset,
-                ffmpegPath: settings.ffmpegPath
+                ffmpegPath: ffmpeg,
+                overwrite: destinationConfirmed
             )
+            isConverting = false
+            convertButton?.title = "Convert"
+            convertButton?.keyEquivalent = "\r"
             if let message {
                 statusField.stringValue = "Failed: \(message)"
             } else {

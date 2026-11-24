@@ -101,14 +101,7 @@ echo "==> mpv $MPV_VERSION (libmpv, -Dgpl=false)"
     meson install -C build > /dev/null
 )
 
-SPARKLE_VERSION="2.10.1"
-SPARKLE_URL="https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
-SPARKLE_SHA256="1a856d2a9edb8e628de88121d7be04cf0e2167f8641650b78fca00b14244cf27"
-echo "==> Sparkle $SPARKLE_VERSION"
-fetch "$SPARKLE_URL" "$SPARKLE_SHA256" "Sparkle-$SPARKLE_VERSION.tar.xz"
-rm -rf "$DEPS/sparkle"
-mkdir -p "$DEPS/sparkle"
-tar -xJf "$SRC/Sparkle-$SPARKLE_VERSION.tar.xz" -C "$DEPS/sparkle"
+"$ROOT/Scripts/fetch-sparkle.sh"
 
 if otool -L "$PREFIX"/lib/*.dylib | grep -iE 'x264|x265|rubberband|vapoursynth|postproc'; then
     echo "error: GPL library linked" >&2
