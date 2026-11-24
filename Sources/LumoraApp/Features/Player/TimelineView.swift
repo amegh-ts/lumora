@@ -26,6 +26,12 @@ final class TimelineView: NSView {
     var chapters: [Chapter] = [] {
         didSet { needsDisplay = true }
     }
+    /// Already-downloaded parts of a stream.
+    var buffered: [ClosedRange<TimeInterval>] = [] {
+        didSet {
+            if buffered != oldValue { needsDisplay = true }
+        }
+    }
 
     var onScrub: ((TimeInterval, Bool) -> Void)?
     var onHover: ((TimeInterval?, CGFloat) -> Void)?
@@ -156,6 +162,17 @@ final class TimelineView: NSView {
 
         NSColor.white.withAlphaComponent(0.22).setFill()
         NSBezierPath(roundedRect: track, xRadius: radius, yRadius: radius).fill()
+
+        if duration > 0 {
+            NSColor.white.withAlphaComponent(0.22).setFill()
+            for range in buffered {
+                let start = x(for: range.lowerBound)
+                let end = x(for: range.upperBound)
+                guard end - start >= 1 else { continue }
+                let rect = NSRect(x: start, y: track.minY, width: end - start, height: height)
+                NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            }
+        }
 
         if let hoverX, active, !isDragging {
             let hoverRect = NSRect(x: track.minX, y: track.minY, width: max(0, min(hoverX, track.maxX) - track.minX), height: height)

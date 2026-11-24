@@ -50,6 +50,7 @@ final class ControlsOverlay: NSView {
     private var showsRemaining = UserDefaults.standard.object(forKey: ControlsOverlay.showsRemainingKey) as? Bool ?? true
     private var hasNeighbours = false
     private var lastVolumeSymbol = ""
+    private var isLive = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -175,6 +176,7 @@ final class ControlsOverlay: NSView {
         timeline.duration = duration
         timeline.currentTime = time
         setIfChanged(timeLabel, TimeFormatter.string(time))
+        guard !isLive else { return }
         let remaining: String
         if duration <= 0 {
             remaining = "--:--"
@@ -242,6 +244,28 @@ final class ControlsOverlay: NSView {
         fullscreenButton.setAccessibilityLabel(fullscreenButton.toolTip)
     }
 
+    func update(buffered: [ClosedRange<TimeInterval>]) {
+        timeline.buffered = buffered
+    }
+
+    /// Live streams have no end: the seek bar goes away and a LIVE badge takes the time's place.
+    func update(isLive live: Bool) {
+        guard live != isLive else { return }
+        isLive = live
+        timeline.isHidden = live
+        if live {
+            remainingLabel.stringValue = "● LIVE"
+            remainingLabel.textColor = .systemRed
+            remainingLabel.toolTip = "Live stream"
+            remainingLabel.setAccessibilityLabel("Live stream")
+        } else {
+            remainingLabel.textColor = HUD.secondaryText
+            remainingLabel.toolTip = "Click to switch between remaining and total time"
+            remainingLabel.setAccessibilityLabel(nil)
+            update(time: currentTime, duration: duration)
+        }
+    }
+
     func update(loopA: TimeInterval?, loopB: TimeInterval?, chapters: [Chapter]) {
         timeline.loopA = loopA
         timeline.loopB = loopB
@@ -259,6 +283,7 @@ final class ControlsOverlay: NSView {
     }
 
     @objc private func toggleRemaining() {
+        guard !isLive else { return }
         showsRemaining.toggle()
         UserDefaults.standard.set(showsRemaining, forKey: Self.showsRemainingKey)
         update(time: currentTime, duration: duration)

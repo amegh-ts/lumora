@@ -30,6 +30,11 @@
 - When the window is hidden or minimized, video stops drawing and, after 5 s, the video output is released (audio keeps playing).
 - Library and settings are written in the background, debounced; mpv's unused built-in scripts are disabled; shader cache persists.
 
+## Window and info
+- Media Info panel (⌘I): codec, resolution, HDR, bitrate, channels, hardware decoding, dropped frames and stream buffer, refreshed live.
+- Go to Time (⌘J); Half, Actual, Double Size and Fit to Screen; the window keeps the video's shape while resizing, and a setting decides whether new files resize it.
+- Audio files show their title, artist and album (cover art when the file has it); live streams and radio show a LIVE badge instead of a seek bar; streams show the downloaded part on the timeline.
+
 ## Updates
 - Automatic, signed updates through Sparkle from GitHub Releases.
 

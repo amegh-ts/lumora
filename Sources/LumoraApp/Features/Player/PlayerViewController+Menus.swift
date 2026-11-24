@@ -149,6 +149,51 @@ extension PlayerViewController {
         osd.show("Subtitle size reset", symbol: "textformat.size")
     }
 
+    @objc func showMediaInfo(_ sender: Any?) {
+        MediaInfoWindowController.shared.show(for: self)
+    }
+
+    /// Playback › Go to Time…: accepts 1:23:45, 23:45 or plain seconds.
+    @objc func goToTime(_ sender: Any?) {
+        guard engine.hasMedia, let window = view.window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Go to Time"
+        let total = engine.duration > 0 ? " (0:00 – \(TimeFormatter.string(engine.duration)))" : ""
+        alert.informativeText = "Enter a time like 1:23:45, 12:30 or 90\(total)."
+        let field = NSTextField(string: TimeFormatter.string(engine.currentTime))
+        field.frame = NSRect(x: 0, y: 0, width: 220, height: 24)
+        field.placeholderString = "h:mm:ss"
+        field.setAccessibilityLabel("Time")
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Go")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            guard let seconds = Self.parseTime(field.stringValue) else {
+                self.osd.show("Couldn't read “\(field.stringValue)” as a time", symbol: "exclamationmark.triangle")
+                return
+            }
+            let target = self.engine.duration > 0 ? min(seconds, self.engine.duration) : seconds
+            self.engine.seek(to: target)
+            self.osd.show("Go to \(TimeFormatter.string(target))", symbol: "clock.arrow.circlepath")
+        }
+    }
+
+    /// "1:23:45" → 5025, "12:30" → 750, "90" → 90. Returns nil for anything else.
+    static func parseTime(_ text: String) -> TimeInterval? {
+        let parts = text.trimmingCharacters(in: .whitespaces).split(separator: ":", omittingEmptySubsequences: false)
+        guard (1...3).contains(parts.count) else { return nil }
+        var total: TimeInterval = 0
+        for (index, part) in parts.enumerated() {
+            guard let value = Double(part), value >= 0 else { return nil }
+            // Minutes and seconds after the first field must be under 60.
+            if index > 0, value >= 60 { return nil }
+            total = total * 60 + value
+        }
+        return total
+    }
+
     @objc func rotateVideo(_ sender: Any?) {
         engine.rotate()
         osd.show("Rotated", symbol: "rotate.right")

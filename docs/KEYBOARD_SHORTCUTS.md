@@ -17,6 +17,7 @@ Every shortcut is also listed next to its command in the menu bar.
 | ⌘← / ⌘→ | Previous / next item |
 | N | Next item |
 | ⌘. | Stop |
+| ⌘J | Go to time |
 
 ## Audio
 | Key | Action |
@@ -40,6 +41,9 @@ Every shortcut is also listed next to its command in the menu bar.
 | Esc | Leave full screen or mini player |
 | ⇧⌘S | Screenshot |
 | ⌥⌘R | Rotate 90° |
+| ⌘0 / ⌘1 / ⌘2 | Half / actual / double size |
+| ⌘3 | Fit to screen |
+| ⌘I | Media info |
 | ⌥⌘M | Mini player |
 | ⌥⌘T | Keep on top |
 | P | Show / hide playlist |
