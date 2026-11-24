@@ -142,6 +142,19 @@ final class PlaybackEngine: ObservableObject {
         shutdown()
     }
 
+    var isActive: Bool { !isShutDown }
+
+    /// Every libmpv call goes through these so nothing touches the handle after shutdown().
+    private func setProperty(_ name: String, _ value: String) {
+        guard !isShutDown else { return }
+        MPV.setProperty(handle, name, value)
+    }
+
+    private func command(_ args: [String], replyID: UInt64 = 0) {
+        guard !isShutDown else { return }
+        MPV.command(handle, args, replyID: replyID)
+    }
+
     /// Number of engines still tearing down in the background; the app waits for zero before quitting.
     static private(set) var pendingShutdowns = 0
 
@@ -176,7 +189,7 @@ final class PlaybackEngine: ObservableObject {
     func attachVideoHost(_ view: NSView) {
         guard renderer == .metal else { return }
         let address = Int(bitPattern: Unmanaged.passUnretained(view).toOpaque())
-        MPV.setProperty(handle, "wid", String(address))
+        setProperty("wid", String(address))
         renderContextReady()
     }
 
@@ -185,10 +198,10 @@ final class PlaybackEngine: ObservableObject {
         guard pendingOpenGLSwitch else { return }
         pendingOpenGLSwitch = false
         renderer = .openGL
-        MPV.setProperty(handle, "vo", "libmpv")
+        setProperty("vo", "libmpv")
         // vid is still "auto" after the failed output, so name the track explicitly to restart video.
         if let track = videoTracks.first {
-            MPV.setProperty(handle, "vid", String(track.id))
+            setProperty("vid", String(track.id))
         }
     }
 
@@ -229,11 +242,11 @@ final class PlaybackEngine: ObservableObject {
             args.append("start=\(resumeTime)")
         }
         if isRenderReady {
-            MPV.command(handle, args)
+            command(args)
         } else {
             pendingLoad = args
         }
-        MPV.setProperty(handle, "pause", "no")
+        setProperty("pause", "no")
         onLoad?(item)
     }
 
@@ -242,7 +255,7 @@ final class PlaybackEngine: ObservableObject {
         isRenderReady = true
         if let pendingLoad {
             self.pendingLoad = nil
-            MPV.command(handle, pendingLoad)
+            command(pendingLoad)
         }
     }
 
@@ -251,11 +264,11 @@ final class PlaybackEngine: ObservableObject {
         if isAtEnd {
             seek(to: 0)
         }
-        MPV.setProperty(handle, "pause", "no")
+        setProperty("pause", "no")
     }
 
     func pause() {
-        MPV.setProperty(handle, "pause", "yes")
+        setProperty("pause", "yes")
     }
 
     func togglePlayback() {
@@ -263,7 +276,7 @@ final class PlaybackEngine: ObservableObject {
     }
 
     func stop() {
-        MPV.command(handle, ["stop"])
+        command(["stop"])
         currentItem = nil
         hasMedia = false
         isPlaying = false
@@ -281,111 +294,111 @@ final class PlaybackEngine: ObservableObject {
         let bounded = duration > 0 ? min(max(time, 0), duration) : max(time, 0)
         currentTime = bounded
         isAtEnd = false
-        MPV.command(handle, ["seek", String(bounded), exact ? "absolute+exact" : "absolute+keyframes"])
+        command(["seek", String(bounded), exact ? "absolute+exact" : "absolute+keyframes"])
     }
 
     func skip(_ seconds: TimeInterval) {
         guard hasMedia else { return }
-        MPV.command(handle, ["seek", String(seconds), "relative+exact"])
+        command(["seek", String(seconds), "relative+exact"])
     }
 
     func setVolume(_ newValue: Float) {
         let bounded = min(max(newValue, 0), 1)
         volume = bounded
-        MPV.setProperty(handle, "volume", String(Double(bounded) * 100))
+        setProperty("volume", String(Double(bounded) * 100))
         if bounded > 0, isMuted {
-            MPV.setProperty(handle, "mute", "no")
+            setProperty("mute", "no")
         }
     }
 
     func toggleMute() {
-        MPV.setProperty(handle, "mute", isMuted ? "no" : "yes")
+        setProperty("mute", isMuted ? "no" : "yes")
     }
 
     func setRate(_ newValue: Float) {
         let bounded = min(max(newValue, 0.1), 8)
         rate = bounded
-        MPV.setProperty(handle, "speed", String(Double(bounded)))
+        setProperty("speed", String(Double(bounded)))
     }
 
     func stepFrame(forward: Bool) {
         guard hasMedia else { return }
-        MPV.command(handle, [forward ? "frame-step" : "frame-back-step"])
+        command([forward ? "frame-step" : "frame-back-step"])
     }
 
     func cycleABLoop() {
         guard hasMedia else { return }
-        MPV.command(handle, ["ab-loop"])
+        command(["ab-loop"])
     }
 
     func clearLoop() {
-        MPV.setProperty(handle, "ab-loop-a", "no")
-        MPV.setProperty(handle, "ab-loop-b", "no")
+        setProperty("ab-loop-a", "no")
+        setProperty("ab-loop-b", "no")
     }
 
     func selectAudioTrack(_ id: Int?) {
-        MPV.setProperty(handle, "aid", id.map(String.init) ?? "no")
+        setProperty("aid", id.map(String.init) ?? "no")
     }
 
     func selectSubtitleTrack(_ id: Int?) {
-        MPV.setProperty(handle, "sid", id.map(String.init) ?? "no")
+        setProperty("sid", id.map(String.init) ?? "no")
     }
 
     func addSubtitle(_ url: URL) {
-        MPV.command(handle, ["sub-add", url.path, "select"])
+        command(["sub-add", url.path, "select"])
     }
 
     func setSubtitleDelay(_ seconds: TimeInterval) {
-        MPV.setProperty(handle, "sub-delay", String(seconds))
+        setProperty("sub-delay", String(seconds))
     }
 
     func setAudioDelay(_ seconds: TimeInterval) {
-        MPV.setProperty(handle, "audio-delay", String(seconds))
+        setProperty("audio-delay", String(seconds))
     }
 
     func setSubtitleScale(_ scale: Double) {
-        MPV.setProperty(handle, "sub-scale", String(min(max(scale, 0.3), 3)))
+        setProperty("sub-scale", String(min(max(scale, 0.3), 3)))
     }
 
     func setHardwareDecoding(_ enabled: Bool) {
-        MPV.setProperty(handle, "hwdec", enabled ? "auto-safe" : "no")
+        setProperty("hwdec", enabled ? "auto-safe" : "no")
     }
 
     func setVideoAdjustments(brightness: Double, contrast: Double, saturation: Double) {
-        MPV.setProperty(handle, "brightness", String(Int((brightness * 100).rounded())))
-        MPV.setProperty(handle, "contrast", String(Int(((contrast - 1) * 100).rounded())))
-        MPV.setProperty(handle, "saturation", String(Int(((saturation - 1) * 100).rounded())))
+        setProperty("brightness", String(Int((brightness * 100).rounded())))
+        setProperty("contrast", String(Int(((contrast - 1) * 100).rounded())))
+        setProperty("saturation", String(Int(((saturation - 1) * 100).rounded())))
     }
 
     func setGravity(_ preference: VideoGravityPreference) {
         switch preference {
         case .aspect:
-            MPV.setProperty(handle, "keepaspect", "yes")
-            MPV.setProperty(handle, "panscan", "0")
+            setProperty("keepaspect", "yes")
+            setProperty("panscan", "0")
         case .fill:
-            MPV.setProperty(handle, "keepaspect", "yes")
-            MPV.setProperty(handle, "panscan", "1")
+            setProperty("keepaspect", "yes")
+            setProperty("panscan", "1")
         case .stretch:
-            MPV.setProperty(handle, "keepaspect", "no")
-            MPV.setProperty(handle, "panscan", "0")
+            setProperty("keepaspect", "no")
+            setProperty("panscan", "0")
         }
     }
 
     func rotate() {
-        MPV.setProperty(handle, "video-rotate", String((rotation + 90) % 360))
+        setProperty("video-rotate", String((rotation + 90) % 360))
     }
 
     func setEqualizer(_ gains: [Double]) {
         let frequencies = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
         let active = zip(frequencies, gains).filter { abs($0.1) >= 0.1 }
         guard !active.isEmpty else {
-            MPV.setProperty(handle, "af", "")
+            setProperty("af", "")
             return
         }
         let chain = active
             .map { "equalizer=f=\($0.0):t=o:w=1:g=\(String(format: "%.1f", $0.1))" }
             .joined(separator: ",")
-        MPV.setProperty(handle, "af", "lavfi=[\(chain)]")
+        setProperty("af", "lavfi=[\(chain)]")
     }
 
     func screenshot(includeSubtitles: Bool = true) {
@@ -397,9 +410,7 @@ final class PlaybackEngine: ObservableObject {
         let url = AppPaths.screenshots.appendingPathComponent("\(title) \(formatter.string(from: Date())).png")
         nextReplyID += 1
         pendingScreenshots[nextReplyID] = url
-        MPV.command(
-            handle,
-            ["screenshot-to-file", url.path, includeSubtitles ? "subtitles" : "video"],
+        command(["screenshot-to-file", url.path, includeSubtitles ? "subtitles" : "video"],
             replyID: nextReplyID
         )
     }

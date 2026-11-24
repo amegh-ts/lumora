@@ -12,6 +12,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     var onClose: ((MainWindowController) -> Void)?
 
+    /// Only the first player window can own this name; extra windows cascade from the existing one.
+    static let frameAutosaveName = "LumoraPlayerWindow"
+
     private let engine: PlaybackEngine
     private let playlist = PlaylistStore()
     private let settings = SettingsStore.shared
@@ -49,7 +52,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         contentViewController = playerViewController
         window.setContentSize(NSSize(width: 1040, height: 620))
-        window.center()
+        if !window.setFrameUsingName(Self.frameAutosaveName) {
+            window.center()
+        }
+        window.setFrameAutosaveName(Self.frameAutosaveName)
         playerViewController.applyInitialVolume()
     }
 
@@ -62,10 +68,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         onClose?(self)
     }
 
+    /// Single entry point for Finder, Dock, menu, drag-and-drop and URL opens.
+    /// Subtitle files attach to the video being played (or the one opened alongside them).
     func open(_ urls: [URL]) {
-        let items = expand(urls).map { PlaybackItem(url: $0) }
-        guard !items.isEmpty else { return }
+        let subtitles = urls.filter(SubtitleService.isSubtitleFile)
+        let media = urls.filter { !SubtitleService.isSubtitleFile($0) }
         showWindow(nil)
+        if !subtitles.isEmpty {
+            playerViewController.addSubtitles(subtitles, forNextFile: !media.isEmpty)
+        }
+        let items = expand(media).map { PlaybackItem(url: $0) }
+        guard !items.isEmpty else { return }
         let firstNewIndex = playlist.items.count
         playlist.add(items)
         playlist.select(at: firstNewIndex)

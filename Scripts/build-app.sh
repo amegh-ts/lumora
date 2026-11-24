@@ -27,5 +27,9 @@ if command -v iconutil >/dev/null 2>&1; then
     iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 fi
 
+# strip invalidates the linker's ad-hoc signature; re-sign so the bundle launches.
+# make-dmg.sh signs again after bundling libraries.
+codesign --force --sign - "$APP" 2>/dev/null
+
 printf 'Built %s\n' "$APP"
 du -sh "$APP"

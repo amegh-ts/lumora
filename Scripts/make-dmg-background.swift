@@ -64,13 +64,23 @@ func render(scale: CGFloat) -> Data? {
         .foregroundColor: NSColor.white.withAlphaComponent(0.92),
         .paragraphStyle: paragraph
     ])
-    title.draw(in: NSRect(x: 0, y: 78, width: size.width, height: 24))
+    title.draw(in: NSRect(x: 0, y: 84, width: size.width, height: 24))
     let subtitle = NSAttributedString(string: "Then open it from Launchpad or your Applications folder.", attributes: [
         .font: NSFont.systemFont(ofSize: 12, weight: .regular),
         .foregroundColor: NSColor.white.withAlphaComponent(0.5),
         .paragraphStyle: paragraph
     ])
-    subtitle.draw(in: NSRect(x: 0, y: 56, width: size.width, height: 18))
+    subtitle.draw(in: NSRect(x: 0, y: 62, width: size.width, height: 18))
+
+    let firstLaunch = NSAttributedString(
+        string: "First launch: System Settings → Privacy & Security → Open Anyway",
+        attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor(red: 0.55, green: 0.72, blue: 1, alpha: 0.85),
+            .paragraphStyle: paragraph
+        ]
+    )
+    firstLaunch.draw(in: NSRect(x: 0, y: 24, width: size.width, height: 16))
 
     return rep.representation(using: .png, properties: [:])
 }
