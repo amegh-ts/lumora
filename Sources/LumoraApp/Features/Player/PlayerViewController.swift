@@ -32,6 +32,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     private var miniPlayerRestoreFrame: NSRect?
     private var pendingSubtitles: [URL] = []
 
+    var playlistCount: Int { playlist.items.count }
+
     var windowController: MainWindowController? {
         view.window?.windowController as? MainWindowController
     }
@@ -66,6 +68,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     }
 
     func tearDown() {
+        NowPlayingService.shared.playerDidClose(self)
         hideTimer?.invalidate()
         saveProgress(force: true)
         videoView.tearDown()
@@ -142,8 +145,10 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         engine.$currentTime
             .combineLatest(engine.$duration)
             .sink { [weak self] time, duration in
-                self?.controls.update(time: time, duration: duration)
-                self?.saveProgress(force: false)
+                guard let self else { return }
+                self.controls.update(time: time, duration: duration)
+                self.saveProgress(force: false)
+                NowPlayingService.shared.playerDidUpdateTime(self)
             }
             .store(in: &cancellables)
 
@@ -152,6 +157,11 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             .sink { [weak self] isPlaying in
                 guard let self else { return }
                 self.controls.update(isPlaying: isPlaying)
+                if isPlaying {
+                    NowPlayingService.shared.playerDidStartPlaying(self)
+                } else {
+                    NowPlayingService.shared.playerDidChange(self)
+                }
                 if isPlaying {
                     self.scheduleHide()
                 } else {
@@ -168,9 +178,21 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             }
             .store(in: &cancellables)
 
+        engine.$duration
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                guard let self else { return }
+                NowPlayingService.shared.playerDidChange(self)
+            }
+            .store(in: &cancellables)
+
         engine.$rate
             .removeDuplicates()
-            .sink { [weak self] rate in self?.controls.update(rate: rate) }
+            .sink { [weak self] rate in
+                guard let self else { return }
+                self.controls.update(rate: rate)
+                NowPlayingService.shared.playerDidChange(self)
+            }
             .store(in: &cancellables)
 
         engine.$loopA
@@ -229,6 +251,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         engine.onFileLoaded = { [weak self] item in
             guard let self else { return }
             self.applySettings()
+            NowPlayingService.shared.playerDidChange(self)
             if !self.pendingSubtitles.isEmpty {
                 let subtitles = self.pendingSubtitles
                 self.pendingSubtitles = []
