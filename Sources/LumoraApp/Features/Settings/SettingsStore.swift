@@ -7,6 +7,21 @@ enum VideoGravityPreference: String, Codable, CaseIterable {
     case stretch
 }
 
+/// When a newly opened file resizes the player window to the video.
+enum WindowFitMode: String, Codable, CaseIterable {
+    case always
+    case firstFile
+    case never
+
+    var title: String {
+        switch self {
+        case .always: return "Every file"
+        case .firstFile: return "First file only"
+        case .never: return "Never"
+        }
+    }
+}
+
 enum VideoRenderer: String, Codable, CaseIterable {
     case metal
     case openGL = "opengl"
@@ -32,6 +47,7 @@ final class SettingsStore: ObservableObject {
     @Published var subtitleSize: Double = 24 { didSet { persist() } }
     @Published var renderer: VideoRenderer = .metal { didSet { persist() } }
     @Published var streamQuality: StreamQuality = .auto { didSet { persist() } }
+    @Published var windowFit: WindowFitMode = .always { didSet { persist() } }
     @Published var subtitleDelay: TimeInterval = 0 { didSet { persist() } }
     @Published var autoDownloadSubtitles = false { didSet { persist() } }
     @Published var subtitleLanguages: String = "en" { didSet { persist() } }
@@ -76,6 +92,7 @@ final class SettingsStore: ObservableObject {
         var saturation: Double = 1
         var renderer: VideoRenderer?
         var streamQuality: StreamQuality = .auto
+        var windowFit: WindowFitMode = .always
 
         init() {}
 
@@ -107,6 +124,7 @@ final class SettingsStore: ObservableObject {
             saturation = value(.saturation, d.saturation)
             renderer = value(.renderer, d.renderer)
             streamQuality = value(.streamQuality, d.streamQuality)
+            windowFit = value(.windowFit, d.windowFit)
         }
     }
 
@@ -143,6 +161,7 @@ final class SettingsStore: ObservableObject {
         saturation = defaults.saturation
         renderer = .metal
         streamQuality = defaults.streamQuality
+        windowFit = defaults.windowFit
         isLoading = false
         persist()
     }
@@ -182,6 +201,7 @@ final class SettingsStore: ObservableObject {
         saturation = snapshot.saturation
         renderer = snapshot.renderer ?? .metal
         streamQuality = snapshot.streamQuality
+        windowFit = snapshot.windowFit
     }
 
     func save() {
@@ -229,6 +249,7 @@ final class SettingsStore: ObservableObject {
         snapshot.saturation = saturation
         snapshot.renderer = renderer
         snapshot.streamQuality = streamQuality
+        snapshot.windowFit = windowFit
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         AppPaths.ensureDirectories()
         try? data.write(to: AppPaths.settingsFile, options: .atomic)

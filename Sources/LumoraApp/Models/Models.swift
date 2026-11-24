@@ -143,6 +143,7 @@ struct MediaTrack: Identifiable, Hashable {
     var isExternal: Bool
     var isSelected: Bool
     var channels: String?
+    var bitrate: Int = 0
 
     var displayName: String {
         var parts: [String] = []
@@ -170,6 +171,34 @@ struct MediaTrack: Identifiable, Hashable {
         }
         let base = parts.joined(separator: " · ")
         return details.isEmpty ? base : "\(base)  (\(details.joined(separator: ", ")))"
+    }
+}
+
+extension MediaTrack {
+    /// yt-dlp turns every audio format of an online video into its own track ("251 - audio only
+    /// (medium)", "140-drc - …"). Keep one per language: the playing one, else the best format.
+    static func collapsingStreamFormats(_ tracks: [MediaTrack]) -> [MediaTrack] {
+        let isFormatList = tracks.count > 2 && tracks.allSatisfy { $0.title?.contains(" - ") == true }
+        guard isFormatList else { return tracks }
+        func score(_ track: MediaTrack) -> (Int, Int, Int) {
+            let title = track.title?.lowercased() ?? ""
+            let normal = title.contains("drc") ? 0 : 1
+            let known = track.codec == nil ? 0 : 1
+            return (known, normal, track.bitrate)
+        }
+        var order: [String] = []
+        var groups: [String: [MediaTrack]] = [:]
+        for track in tracks {
+            let key = track.language ?? ""
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(track)
+        }
+        return order.compactMap { key in
+            guard let group = groups[key] else { return nil }
+            var chosen = group.first(where: \.isSelected) ?? group.max { score($0) < score($1) }!
+            chosen.title = key.isEmpty ? (order.count == 1 ? "Original audio" : "Audio") : nil
+            return chosen
+        }
     }
 }
 

@@ -136,7 +136,12 @@ enum SettingsPanes {
                         "Video size", detail: "How video fills the window when its shape differs.",
                         control: Form.popup(
                             [("Fit", VideoGravityPreference.aspect), ("Fill (crop edges)", .fill), ("Stretch", .stretch)],
-                            { settings.videoGravity }, { settings.videoGravity = $0 }))
+                            { settings.videoGravity }, { settings.videoGravity = $0 })),
+                    Form.row(
+                        "Resize window to the video", detail: "Half, Actual and Double Size are in the View menu.",
+                        control: Form.popup(
+                            WindowFitMode.allCases.map { ($0.title, $0) },
+                            { settings.windowFit }, { settings.windowFit = $0 }))
                 ]),
             Form.section(
                 "Updates",

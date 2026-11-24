@@ -14,6 +14,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     private let controls = ControlsOverlay(frame: .zero)
     private let titleBar = TitleOverlayView(frame: .zero)
     private let emptyState = EmptyStateView(frame: .zero)
+    private let audioArtwork = AudioArtworkView(frame: .zero)
     let osd = OSDView(frame: .zero)
     private let thumbnail = ThumbnailPreviewView(frame: .zero)
     private let spinner = NSProgressIndicator()
@@ -86,7 +87,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     }
 
     private func installViews() {
-        for subview in [videoView, emptyState, titleBar, spinner, loadingLabel, osd, sidebar, controls, thumbnail] as [NSView] {
+        for subview in [videoView, audioArtwork, emptyState, titleBar, spinner, loadingLabel, osd, sidebar, controls, thumbnail] as [NSView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(subview)
         }
@@ -96,6 +97,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         spinner.appearance = NSAppearance(named: .darkAqua)
         sidebar.isHidden = true
         sidebar.delegate = self
+        audioArtwork.isHidden = true
 
         let maxWidth = controls.widthAnchor.constraint(lessThanOrEqualToConstant: 780)
         let preferredWidth = controls.widthAnchor.constraint(equalToConstant: 780)
@@ -110,6 +112,11 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             videoView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             videoView.topAnchor.constraint(equalTo: rootView.topAnchor),
             videoView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+
+            audioArtwork.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            audioArtwork.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            audioArtwork.topAnchor.constraint(equalTo: rootView.topAnchor),
+            audioArtwork.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
 
             emptyState.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             emptyState.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
@@ -164,6 +171,32 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
                 self.saveProgress(force: false)
                 NowPlayingService.shared.playerDidUpdateTime(self)
             }
+            .store(in: &cancellables)
+
+        engine.$bufferedRanges
+            .sink { [weak self] in self?.controls.update(buffered: $0) }
+            .store(in: &cancellables)
+
+        engine.$hasPicture
+            .combineLatest(engine.$hasMedia, engine.$mediaTags, engine.$isLive)
+            .sink { [weak self] hasPicture, hasMedia, tags, isLive in
+                guard let self else { return }
+                self.controls.update(isLive: isLive)
+                let show = hasMedia && !hasPicture
+                if show {
+                    self.audioArtwork.update(title: self.engine.currentItem?.title ?? "", tags: tags, isLive: isLive)
+                }
+                if self.audioArtwork.isHidden == show {
+                    self.audioArtwork.isHidden = !show
+                }
+                DispatchQueue.main.async { self.updateAspectLock() }
+            }
+            .store(in: &cancellables)
+
+        engine.$rotation
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.updateAspectLock() } }
             .store(in: &cancellables)
 
         engine.$isPlaying
@@ -230,13 +263,21 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             .store(in: &cancellables)
 
         engine.$audioTracks
-            .combineLatest(engine.$subtitleTracks)
-            .sink { [weak self] _, _ in self?.refreshControlState() }
+            .combineLatest(engine.$subtitleTracks, engine.$hasMedia)
+            // @Published fires before the new value is stored; read the engine after it lands.
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.refreshControlState() } }
             .store(in: &cancellables)
 
         engine.$videoSize
             .removeDuplicates()
-            .sink { [weak self] size in self?.fitWindow(to: size) }
+            // Width and height arrive separately and @Published fires before storing: size from
+            // the engine on the next turn, once both have landed.
+            .sink { [weak self] _ in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.fitWindow(to: self.engine.videoSize)
+                }
+            }
             .store(in: &cancellables)
 
         playlist.$items
@@ -356,7 +397,10 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
     private func installSettingsBindings() {
         settings.$videoGravity.removeDuplicates().dropFirst()
-            .sink { [weak self] in self?.engine.setGravity($0) }
+            .sink { [weak self] in
+                self?.engine.setGravity($0)
+                DispatchQueue.main.async { self?.updateAspectLock() }
+            }
             .store(in: &cancellables)
         settings.$brightness.combineLatest(settings.$contrast, settings.$saturation).dropFirst()
             .sink { [weak self] in self?.engine.setVideoAdjustments(brightness: $0, contrast: $1, saturation: $2) }
@@ -419,40 +463,89 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         let isFullscreen = view.window?.styleMask.contains(.fullScreen) ?? false
         controls.update(
             hasPlaylistNeighbours: playlist.items.count > 1,
-            hasTracks: !engine.audioTracks.isEmpty || !engine.subtitleTracks.isEmpty,
+            hasAudio: !engine.audioTracks.isEmpty,
+            hasMedia: engine.hasMedia,
             isFullscreen: isFullscreen
         )
     }
 
+    private var hasSizedWindow = false
+
+    /// Resizes the window to a newly opened video, as the "Resize window" setting allows.
     private func fitWindow(to size: CGSize) {
-        guard size.width > 0, size.height > 0, !resizedForCurrentFile,
-            let window = view.window, !window.styleMask.contains(.fullScreen),
-            miniPlayerRestoreFrame == nil,
-            let screen = window.screen ?? NSScreen.main
-        else { return }
+        updateAspectLock()
+        guard size.width > 0, size.height > 0, !resizedForCurrentFile else { return }
         resizedForCurrentFile = true
-        let rotated = engine.rotation % 180 != 0
-        let videoSize = rotated ? CGSize(width: size.height, height: size.width) : size
-        let visible = screen.visibleFrame
-        let maxSize = CGSize(width: visible.width * 0.8, height: visible.height * 0.8)
-        let scale = min(1, maxSize.width / videoSize.width, maxSize.height / videoSize.height)
-        var content = CGSize(width: videoSize.width * scale, height: videoSize.height * scale)
-        let aspect = videoSize.width / videoSize.height
-        content.width = max(content.width, min(640, maxSize.width))
-        content.height = content.width / aspect
-        // Portrait or very tall video: fit the height to the screen and derive the width.
-        if content.height > maxSize.height {
-            content.height = maxSize.height
-            content.width = content.height * aspect
+        switch settings.windowFit {
+        case .never: return
+        case .firstFile where hasSizedWindow: return
+        default: break
         }
-        content.height = max(content.height, 240)
+        if resizeWindow(toVideoScale: nil, maxFraction: 0.8, minWidth: 640) {
+            hasSizedWindow = true
+        }
+    }
+
+    /// Video size in points with rotation applied (one video pixel per point).
+    private var orientedVideoSize: CGSize? {
+        let size = engine.videoSize
+        guard size.width > 0, size.height > 0 else { return nil }
+        return engine.rotation % 180 != 0 ? CGSize(width: size.height, height: size.width) : size
+    }
+
+    /// scale nil = as large as fits within maxFraction of the screen (never upscaling past
+    /// minWidth); otherwise the video at that scale, shrunk only if it would not fit.
+    @discardableResult
+    private func resizeWindow(toVideoScale scale: CGFloat?, maxFraction: CGFloat, minWidth: CGFloat = 0) -> Bool {
+        guard let videoSize = orientedVideoSize, let window = view.window, !window.styleMask.contains(.fullScreen),
+            miniPlayerRestoreFrame == nil, let screen = window.screen ?? NSScreen.main
+        else { return false }
+        let visible = screen.visibleFrame
+        let chrome = window.frameRect(forContentRect: .zero).size
+        let maxSize = CGSize(width: visible.width * maxFraction - chrome.width, height: visible.height * maxFraction - chrome.height)
+        let aspect = videoSize.width / videoSize.height
+        var content: CGSize
+        if let scale {
+            content = CGSize(width: videoSize.width * scale, height: videoSize.height * scale)
+        } else {
+            let fit = min(1, maxSize.width / videoSize.width, maxSize.height / videoSize.height)
+            content = CGSize(width: videoSize.width * fit, height: videoSize.height * fit)
+            content.width = max(content.width, min(minWidth, maxSize.width))
+            content.height = content.width / aspect
+        }
+        // Never larger than the screen; tall or portrait video fits by height.
+        if content.width > maxSize.width {
+            content = CGSize(width: maxSize.width, height: maxSize.width / aspect)
+        }
+        if content.height > maxSize.height {
+            content = CGSize(width: maxSize.height * aspect, height: maxSize.height)
+        }
+        content.width = max(content.width, 320)
+        content.height = max(content.height, 180)
         let oldFrame = window.frame
         var frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: content))
         frame.origin = NSPoint(x: oldFrame.midX - frame.width / 2, y: oldFrame.midY - frame.height / 2)
         frame.origin.x = min(max(frame.origin.x, visible.minX), visible.maxX - frame.width)
         frame.origin.y = min(max(frame.origin.y, visible.minY), visible.maxY - frame.height)
         window.setFrame(frame, display: true, animate: !reduceMotion)
+        return true
     }
+
+    /// In Fit mode the window keeps the video's shape while resizing, so no black bars appear.
+    /// Fill/Stretch, audio without a picture and the empty window resize freely.
+    func updateAspectLock() {
+        guard let window = view.window else { return }
+        if settings.videoGravity == .aspect, engine.hasMedia, engine.hasPicture, let size = orientedVideoSize {
+            window.contentAspectRatio = size
+        } else {
+            window.contentResizeIncrements = NSSize(width: 1, height: 1)
+        }
+    }
+
+    @objc func halfSize(_ sender: Any?) { resizeWindow(toVideoScale: 0.5, maxFraction: 1) }
+    @objc func actualSize(_ sender: Any?) { resizeWindow(toVideoScale: 1, maxFraction: 1) }
+    @objc func doubleSize(_ sender: Any?) { resizeWindow(toVideoScale: 2, maxFraction: 1) }
+    @objc func fitToScreen(_ sender: Any?) { resizeWindow(toVideoScale: 100, maxFraction: 1) }
 
     func saveProgress(force: Bool) {
         guard let item = engine.currentItem, engine.duration > 0 else { return }
@@ -586,7 +679,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
     /// Keep controls on screen for VoiceOver and Full Keyboard Access users.
     private var keepsControlsVisible: Bool {
-        NSWorkspace.shared.isVoiceOverEnabled
+        NSWorkspace.shared.isVoiceOverEnabled || DebugMode.keepControls
     }
 
     // MARK: - Actions
@@ -684,7 +777,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     private func menu(for kind: ControlsMenu) -> NSMenu {
         switch kind {
         case .speed: return speedMenu()
-        case .tracks: return tracksMenu()
+        case .audio: return audioMenu()
+        case .subtitles: return subtitlesMenu()
         case .more: return moreMenu()
         }
     }
@@ -702,9 +796,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         return menu
     }
 
-    private func tracksMenu() -> NSMenu {
+    private func audioMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addHeader("Audio")
+        menu.addHeader("Audio Track")
         if engine.audioTracks.isEmpty {
             menu.addItem(ClosureMenuItem("No audio", enabled: false) {})
         }
@@ -716,6 +810,18 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
                 })
         }
         menu.addItem(.separator())
+        let delay = NSMenuItem(title: "Audio Delay: \(String(format: "%+.1f", engine.audioDelay)) s", action: nil, keyEquivalent: "")
+        delay.submenu = delayMenu { [weak self] in self?.adjustAudioDelay($0) }
+        menu.addItem(delay)
+        menu.addItem(
+            ClosureMenuItem("Equalizer…") {
+                (NSApp.delegate as? AppDelegate)?.showAudioSettings(nil)
+            })
+        return menu
+    }
+
+    private func subtitlesMenu() -> NSMenu {
+        let menu = NSMenu()
         menu.addHeader("Subtitles")
         menu.addItem(
             ClosureMenuItem("Off", checked: engine.selectedSubtitleTrackID == nil) { [weak self] in
@@ -736,16 +842,21 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
                 SubtitleSearchWindowController.shared.showWindow(nil)
             })
         menu.addItem(.separator())
-        let delay = NSMenuItem(title: "Subtitle Delay: \(String(format: "%+.1f", settings.subtitleDelay)) s", action: nil, keyEquivalent: "")
-        let delayMenu = NSMenu()
-        delayMenu.addItem(ClosureMenuItem("Earlier by 0.1 s", key: "") { [weak self] in self?.adjustSubtitleDelay(-0.1) })
-        delayMenu.addItem(ClosureMenuItem("Later by 0.1 s") { [weak self] in self?.adjustSubtitleDelay(0.1) })
-        delayMenu.addItem(ClosureMenuItem("Earlier by 1 s") { [weak self] in self?.adjustSubtitleDelay(-1) })
-        delayMenu.addItem(ClosureMenuItem("Later by 1 s") { [weak self] in self?.adjustSubtitleDelay(1) })
-        delayMenu.addItem(.separator())
-        delayMenu.addItem(ClosureMenuItem("Reset") { [weak self] in self?.adjustSubtitleDelay(nil) })
-        delay.submenu = delayMenu
+        // The per-file delay lives in the engine; Settings only holds the default for new files.
+        let delay = NSMenuItem(title: "Subtitle Delay: \(String(format: "%+.1f", engine.subtitleDelay)) s", action: nil, keyEquivalent: "")
+        delay.submenu = delayMenu { [weak self] in self?.adjustSubtitleDelay($0) }
         menu.addItem(delay)
+        return menu
+    }
+
+    private func delayMenu(_ adjust: @escaping (TimeInterval?) -> Void) -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(ClosureMenuItem("Earlier by 0.1 s") { adjust(-0.1) })
+        menu.addItem(ClosureMenuItem("Later by 0.1 s") { adjust(0.1) })
+        menu.addItem(ClosureMenuItem("Earlier by 1 s") { adjust(-1) })
+        menu.addItem(ClosureMenuItem("Later by 1 s") { adjust(1) })
+        menu.addItem(.separator())
+        menu.addItem(ClosureMenuItem("Reset") { adjust(nil) })
         return menu
     }
 
@@ -762,6 +873,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             menu.addItem(.separator())
         }
         menu.addItem(ClosureMenuItem("Take Screenshot") { [weak self] in self?.takeScreenshot(nil) })
+        menu.addItem(ClosureMenuItem("Media Info") { [weak self] in self?.showMediaInfo(nil) })
+        menu.addItem(ClosureMenuItem("Go to Time…") { [weak self] in self?.goToTime(nil) })
         menu.addItem(ClosureMenuItem("Add Bookmark") { [weak self] in self?.addBookmark() })
         if let item = engine.currentItem, let bookmarks = library.record(for: item.url)?.bookmarks, !bookmarks.isEmpty {
             let parent = NSMenuItem(title: "Bookmarks", action: nil, keyEquivalent: "")
@@ -833,9 +946,12 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         let speed = NSMenuItem(title: "Speed", action: nil, keyEquivalent: "")
         speed.submenu = speedMenu()
         menu.addItem(speed)
-        let tracks = NSMenuItem(title: "Audio & Subtitles", action: nil, keyEquivalent: "")
-        tracks.submenu = tracksMenu()
-        menu.addItem(tracks)
+        let audio = NSMenuItem(title: "Audio", action: nil, keyEquivalent: "")
+        audio.submenu = audioMenu()
+        menu.addItem(audio)
+        let subtitles = NSMenuItem(title: "Subtitles", action: nil, keyEquivalent: "")
+        subtitles.submenu = subtitlesMenu()
+        menu.addItem(subtitles)
         menu.addItem(.separator())
         for item in moreMenu().items {
             item.menu?.removeItem(item)
@@ -1145,7 +1261,12 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             #selector(addBookmarkAction(_:)), #selector(volumeUp(_:)), #selector(volumeDown(_:)),
             #selector(addSubtitleFile(_:)), #selector(subtitleEarlier(_:)), #selector(subtitleLater(_:)),
             #selector(resetSubtitleDelay(_:)), #selector(rotateVideo(_:)), #selector(audioEarlier(_:)),
-            #selector(audioLater(_:)), #selector(resetAudioDelay(_:)):
+            #selector(audioLater(_:)), #selector(resetAudioDelay(_:)), #selector(goToTime(_:)),
+            #selector(showMediaInfo(_:)):
+            return engine.hasMedia
+        case #selector(halfSize(_:)), #selector(actualSize(_:)), #selector(doubleSize(_:)), #selector(fitToScreen(_:)):
+            return engine.hasPicture && engine.videoSize.width > 0 && miniPlayerRestoreFrame == nil
+                && view.window?.styleMask.contains(.fullScreen) == false
             return engine.hasMedia
         default:
             return true

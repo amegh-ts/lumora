@@ -14,6 +14,14 @@ enum DebugTimeline {
 
 /// Test-only switches. Always false in release builds.
 enum DebugMode {
+    /// LUMORA_KEEP_CONTROLS=1: never auto-hide the control bar (for screenshots).
+    static var keepControls: Bool {
+        #if DEBUG
+            return ProcessInfo.processInfo.environment["LUMORA_KEEP_CONTROLS"] != nil
+        #else
+            return false
+        #endif
+    }
     /// LUMORA_BACKGROUND=1: never activate or bring windows forward, keep rendering while covered.
     static var background: Bool {
         #if DEBUG
@@ -66,6 +74,19 @@ enum DebugMode {
                             DebugTimeline.log("select \(target.label) at t=\(String(format: "%.1f", player.engine.currentTime))")
                             player.engine.selectStreamVariant(target.id)
                         }
+                    }
+                }
+            }
+            // LUMORA_ACTIONS="2:actualSize:,3:showMediaInfo:" → send menu actions to the player.
+            for entry in (environment["LUMORA_ACTIONS"] ?? "").split(separator: ",") {
+                let parts = entry.split(separator: ":", maxSplits: 1)
+                guard parts.count == 2, let delay = Double(parts[0]) else { continue }
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    guard let player = NSApp.windows.compactMap({ $0.contentViewController as? PlayerViewController }).first else { return }
+                    let sent = NSApp.sendAction(Selector(String(parts[1])), to: player, from: nil)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        let size = player.view.window?.contentView?.frame.size ?? .zero
+                        print("[debug] action \(parts[1]) sent=\(sent) content=\(Int(size.width))x\(Int(size.height))")
                     }
                 }
             }
@@ -122,6 +143,12 @@ enum DebugMode {
         }
 
         private static func snapshot(to url: URL) {
+            if let info = MediaInfoWindowController.shared.window, info.isVisible, let frameView = info.contentView?.superview,
+                let rep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds)
+            {
+                frameView.cacheDisplay(in: frameView.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: url.deletingPathExtension().appendingPathExtension("info.png"))
+            }
             let players = NSApp.windows.filter { $0.windowController is MainWindowController }
             FileHandle.standardError.write("[debug] player windows=\(players.count) visible=\(players.filter(\.isVisible).count)\n".data(using: .utf8)!)
             guard let window = players.first(where: \.isVisible),
@@ -131,7 +158,7 @@ enum DebugMode {
                 let engine = player.engine
                 print("[debug] controlsShowing=\(player.areControlsShowing)")
                 print(
-                    "[debug] title=\(engine.currentItem?.title ?? "-") t=\(engine.currentTime) d=\(engine.duration) playing=\(engine.isPlaying) media=\(engine.hasMedia) size=\(engine.videoSize) audio=\(engine.audioTracks.map(\.displayName)) subs=\(engine.subtitleTracks.map(\.displayName)) chapters=\(engine.chapters.count) status=\(engine.statusMessage)"
+                    "[debug] title=\(engine.currentItem?.title ?? "-") t=\(engine.currentTime) d=\(engine.duration) playing=\(engine.isPlaying) media=\(engine.hasMedia) size=\(engine.videoSize) audio=\(engine.audioTracks.map(\.displayName)) subs=\(engine.subtitleTracks.map(\.displayName)) chapters=\(engine.chapters.count) status=\(engine.statusMessage) live=\(engine.isLive) picture=\(engine.hasPicture) buffered=\(engine.bufferedRanges.map { String(format: "%.0f-%.0f", $0.lowerBound, $0.upperBound) }) tags=\(engine.mediaTags) content=\(window.contentLayoutRect.size) aspect=\(window.contentAspectRatio)"
                 )
             }
             if let player = window.contentViewController as? PlayerViewController, player.engine.isActive {

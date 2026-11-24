@@ -24,6 +24,17 @@ final class PlaybackEngine: ObservableObject {
     @Published private(set) var rotation = 0
     /// Renditions of an online video (YouTube formats, HLS variants); empty for local files.
     @Published private(set) var streamVariants: [StreamVariant] = []
+    /// Downloaded time ranges of a stream (for the timeline); empty for local files.
+    @Published private(set) var bufferedRanges: [ClosedRange<TimeInterval>] = []
+    /// A stream with no end (live TV, radio).
+    @Published private(set) var isLive = false
+    /// Title/artist/album tags of the current file, keys lowercased.
+    @Published private(set) var mediaTags: [String: String] = [:]
+    /// False once loaded when the file has no picture at all (no video and no cover art).
+    @Published private(set) var hasPicture = true
+    private var isFileLoaded = false
+    private var isPartiallySeekable = false
+    var isStream: Bool { currentItem.map { !$0.url.isFileURL } ?? false }
 
     var selectedAudioTrackID: Int? { audioTracks.first { $0.isSelected }?.id }
     var selectedSubtitleTrackID: Int? { subtitleTracks.first { $0.isSelected }?.id }
@@ -49,6 +60,16 @@ final class PlaybackEngine: ObservableObject {
     private var pendingLoad: [String]?
     private var isAtEnd = false
     private var nextReplyID: UInt64 = 100
+    private final class PropertyBatch {
+        var values: [String: String] = [:]
+        var remaining: Int
+        let completion: ([String: String]) -> Void
+        init(count: Int, completion: @escaping ([String: String]) -> Void) {
+            remaining = count
+            self.completion = completion
+        }
+    }
+    private var pendingReads: [UInt64: (name: String, batch: PropertyBatch)] = [:]
     private var pendingScreenshots: [UInt64: URL] = [:]
 
     private static var mpvLogging: Bool {
@@ -174,6 +195,9 @@ final class PlaybackEngine: ObservableObject {
         observe("video-rotate", MPV_FORMAT_INT64)
         observe("vo-configured", MPV_FORMAT_FLAG)
         observe("edition-list", MPV_FORMAT_NODE)
+        observe("demuxer-cache-state", MPV_FORMAT_NODE)
+        observe("metadata", MPV_FORMAT_NODE)
+        observe("partially-seekable", MPV_FORMAT_FLAG)
         observe("current-edition", MPV_FORMAT_INT64)
 
         mpv_request_log_messages(handle, "error")
@@ -279,6 +303,11 @@ final class PlaybackEngine: ObservableObject {
         isAtEnd = false
         hasMedia = true
         streamVariants = []
+        bufferedRanges = []
+        isLive = false
+        mediaTags = [:]
+        hasPicture = true
+        isFileLoaded = false
         let target = item.url.isFileURL ? item.url.path : item.url.absoluteString
         // Local files read ahead from disk on demand. Streams keep a large window both ways so
         // ±10 s jumps land inside data that is already downloaded.
@@ -636,6 +665,9 @@ final class PlaybackEngine: ObservableObject {
             let property = data.assumingMemoryBound(to: mpv_event_property.self).pointee
             handle(property: property)
         case MPV_EVENT_FILE_LOADED:
+            isFileLoaded = true
+            updateLiveState()
+            hasPicture = !videoTracks.isEmpty
             DebugTimeline.log("file loaded")
             Self.releaseFreeMemory(after: 3)
             statusMessage = ""
@@ -657,6 +689,18 @@ final class PlaybackEngine: ObservableObject {
         case MPV_EVENT_LOG_MESSAGE:
             guard let data = event.data else { return }
             handleLog(data.assumingMemoryBound(to: mpv_event_log_message.self).pointee)
+        case MPV_EVENT_GET_PROPERTY_REPLY:
+            guard let pending = pendingReads.removeValue(forKey: event.reply_userdata) else { return }
+            if event.error >= 0, let data = event.data {
+                let property = data.assumingMemoryBound(to: mpv_event_property.self).pointee
+                if property.format == MPV_FORMAT_STRING, let raw = property.data?.assumingMemoryBound(to: UnsafePointer<CChar>?.self).pointee {
+                    pending.batch.values[pending.name] = String(cString: raw)
+                }
+            }
+            pending.batch.remaining -= 1
+            if pending.batch.remaining == 0 {
+                pending.batch.completion(pending.batch.values)
+            }
         case MPV_EVENT_COMMAND_REPLY:
             guard let url = pendingScreenshots.removeValue(forKey: event.reply_userdata) else { return }
             onScreenshot?(event.error >= 0 ? url : nil)
@@ -677,6 +721,7 @@ final class PlaybackEngine: ObservableObject {
             }
         case "duration":
             duration = hasValue ? property.data.assumingMemoryBound(to: Double.self).pointee : 0
+            updateLiveState()
         case "pause":
             isPaused = hasValue ? property.data.assumingMemoryBound(to: Int32.self).pointee != 0 : true
             isPlaying = hasMedia && !isPaused
@@ -741,6 +786,40 @@ final class PlaybackEngine: ObservableObject {
                 guard let map = entry as? [String: Any], let id = map.int("id"), let title = map.string("title") else { return nil }
                 return StreamVariant(id: id, title: title, isSelected: id == currentEdition)
             }
+        case "demuxer-cache-state":
+            // Local files read ahead from disk; only streams show a buffer bar.
+            guard hasValue, isStream else {
+                if !bufferedRanges.isEmpty { bufferedRanges = [] }
+                return
+            }
+            let node = property.data.assumingMemoryBound(to: mpv_node.self).pointee
+            let state = MPV.value(from: node) as? [String: Any]
+            let ranges = (state?["seekable-ranges"] as? [Any] ?? []).compactMap { entry -> ClosedRange<TimeInterval>? in
+                guard let map = entry as? [String: Any], let start = map.double("start"), let end = map.double("end"), end > start
+                else { return nil }
+                return start...end
+            }
+            // The cache reports many times a second; publish only visible changes.
+            let changed =
+                ranges.count != bufferedRanges.count
+                || zip(ranges, bufferedRanges).contains { abs($0.lowerBound - $1.lowerBound) > 0.5 || abs($0.upperBound - $1.upperBound) > 0.5 }
+            if changed { bufferedRanges = ranges }
+        case "partially-seekable":
+            isPartiallySeekable = hasValue && property.data.assumingMemoryBound(to: Int32.self).pointee != 0
+            updateLiveState()
+        case "metadata":
+            guard hasValue else {
+                mediaTags = [:]
+                return
+            }
+            let node = property.data.assumingMemoryBound(to: mpv_node.self).pointee
+            let map = MPV.value(from: node) as? [String: Any] ?? [:]
+            var tags: [String: String] = [:]
+            for (key, value) in map {
+                if let text = value as? String, !text.isEmpty { tags[key.lowercased()] = text }
+            }
+            mediaTags = tags
+            updateLiveState()
         case "current-edition":
             currentEdition = hasValue ? Int(property.data.assumingMemoryBound(to: Int64.self).pointee) : -1
             streamVariants = streamVariants.map { variant in
@@ -763,6 +842,35 @@ final class PlaybackEngine: ObservableObject {
         }
     }
 
+    /// Reads several properties without blocking the main thread (mpv's video output may be
+    /// waiting on it). Missing properties are left out of the result.
+    func readProperties(_ names: [String], completion: @escaping ([String: String]) -> Void) {
+        guard !isShutDown, !names.isEmpty else {
+            completion([:])
+            return
+        }
+        let batch = PropertyBatch(count: names.count, completion: completion)
+        for name in names {
+            nextReplyID += 1
+            pendingReads[nextReplyID] = (name, batch)
+            if mpv_get_property_async(handle, nextReplyID, name, MPV_FORMAT_STRING) < 0 {
+                pendingReads.removeValue(forKey: nextReplyID)
+                batch.remaining -= 1
+            }
+        }
+        if batch.remaining == 0 {
+            completion(batch.values)
+        }
+    }
+
+    private func updateLiveState() {
+        // Live: no known end, only the downloaded part can be seeked (a stream without a fixed
+        // length), or Icecast/Shoutcast radio, which reports a growing "duration".
+        let radio = mediaTags["icy-name"] != nil || mediaTags["icy-title"] != nil
+        let live = isFileLoaded && isStream && (duration <= 0 || isPartiallySeekable || radio)
+        if live != isLive { isLive = live }
+    }
+
     private func parseTracks(_ list: [Any]) {
         var audio: [MediaTrack] = []
         var subtitles: [MediaTrack] = []
@@ -781,7 +889,8 @@ final class PlaybackEngine: ObservableObject {
                 codec: map.string("codec"),
                 isExternal: map.bool("external"),
                 isSelected: map.bool("selected"),
-                channels: map.string("demux-channels").flatMap { $0.hasPrefix("unknown") ? nil : $0 }
+                channels: map.string("demux-channels").flatMap { $0.hasPrefix("unknown") ? nil : $0 },
+                bitrate: map.int("demux-bitrate") ?? 0
             )
             switch kind {
             case .audio: audio.append(track)
@@ -789,9 +898,14 @@ final class PlaybackEngine: ObservableObject {
             case .video: video.append(track)
             }
         }
-        audioTracks = audio
+        let isStream = currentItem.map { !$0.url.isFileURL } ?? false
+        audioTracks = isStream ? MediaTrack.collapsingStreamFormats(audio) : audio
         subtitleTracks = subtitles
         videoTracks = video
+        if isFileLoaded {
+            let picture = !video.isEmpty
+            if picture != hasPicture { hasPicture = picture }
+        }
     }
 }
 
