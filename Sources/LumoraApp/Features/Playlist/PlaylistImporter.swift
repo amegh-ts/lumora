@@ -79,7 +79,9 @@ enum PlaylistImporter {
             let url = URL(string: text) ?? text.addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed).flatMap(URL.init(string:))
             guard let url, let scheme = url.scheme?.lowercased() else { return nil }
             if scheme == "file" {
-                return url.isFileURL ? url.standardizedFileURL : nil
+                // Only absolute paths; "file:lavfi://…" would otherwise hand mpv "lavfi://…".
+                guard url.isFileURL, url.path.hasPrefix("/"), !url.path.contains("://") else { return nil }
+                return URL(fileURLWithPath: url.path).standardizedFileURL
             }
             return allowedSchemes.contains(scheme) ? url : nil
         }

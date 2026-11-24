@@ -325,6 +325,13 @@ final class PlaybackEngine: ObservableObject {
         hasPicture = true
         isFileLoaded = false
         let target = item.url.isFileURL ? item.url.path : item.url.absoluteString
+        // mpv reads "proto://…" in any string as a protocol (lavfi, edl, memory, av…). Only an
+        // absolute path or an allowed network link may reach loadfile, whatever opened it.
+        guard Self.isSafeTarget(target, isFile: item.url.isFileURL) else {
+            statusMessage = "Couldn't play “\(item.title)”. This kind of link isn't supported."
+            onError?(statusMessage)
+            return
+        }
         // Local files read ahead from disk on demand. Streams keep a large window both ways so
         // ±10 s jumps land inside data that is already downloaded.
         var fileOptions: [String]
@@ -468,6 +475,14 @@ final class PlaybackEngine: ObservableObject {
 
     static func languageList(_ text: String) -> String {
         text.split(whereSeparator: { $0 == "," || $0 == " " }).map { $0.lowercased() }.joined(separator: ",")
+    }
+
+    static func isSafeTarget(_ target: String, isFile: Bool) -> Bool {
+        if isFile {
+            return target.hasPrefix("/") && !target.contains("://")
+        }
+        guard let scheme = URL(string: target)?.scheme?.lowercased() else { return false }
+        return PlaylistImporter.allowedSchemes.contains(scheme)
     }
 
     private static let directMediaExtensions: Set<String> = [
