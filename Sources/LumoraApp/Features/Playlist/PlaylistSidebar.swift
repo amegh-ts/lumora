@@ -34,7 +34,12 @@ final class PlaylistSidebar: NSView, NSTableViewDataSource, NSTableViewDelegate 
 
     private func commonInit() {
         wantsLayer = true
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        appearance = NSAppearance(named: .vibrantDark)
+        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.72).cgColor
+        layer?.cornerRadius = 14
+        layer?.cornerCurve = .continuous
+        layer?.borderWidth = 0.5
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("item"))
         column.title = "Media"
@@ -125,10 +130,7 @@ final class PlaylistSidebar: NSView, NSTableViewDataSource, NSTableViewDelegate 
         return cell
     }
 
-    func tableViewSelectionDidChange(_ notification: Notification) {
-        guard tableView.selectedRow >= 0 else { return }
-        delegate?.playlistSidebar(self, didSelect: tableView.selectedRow)
-    }
+    func tableViewSelectionDidChange(_ notification: Notification) {}
 
     private static func makeButton(symbol: String, tooltip: String) -> NSButton {
         let button = NSButton(

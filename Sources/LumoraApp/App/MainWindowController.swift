@@ -1,90 +1,174 @@
 import AppKit
+import UniformTypeIdentifiers
 
 @MainActor
 final class MainWindowController: NSWindowController, NSWindowDelegate {
-    private let engine = PlaybackEngine()
+    static let mediaExtensions: Set<String> = [
+        "mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "mpg", "mpeg", "m2ts", "mts", "ts",
+        "3gp", "ogv", "vob", "rm", "rmvb", "asf", "divx", "f4v", "hevc", "y4m",
+        "mp3", "m4a", "aac", "flac", "wav", "ogg", "opus", "wma", "alac", "aiff", "aif", "ape", "dts", "ac3", "mka",
+        "m3u", "m3u8", "pls"
+    ]
+
+    var onClose: ((MainWindowController) -> Void)?
+
+    private let engine: PlaybackEngine
     private let playlist = PlaylistStore()
     private let settings = SettingsStore.shared
     private let library = LibraryStore.shared
+    private let playerViewController: PlayerViewController
 
-    private lazy var playerViewController: PlayerViewController = {
-        PlayerViewController(
+    init() {
+        engine = PlaybackEngine(ytdlPath: SettingsStore.shared.ytDLPPath, hardwareDecoding: SettingsStore.shared.hardwareDecoding)
+        playerViewController = PlayerViewController(
             engine: engine,
             playlist: playlist,
-            settings: settings,
-            library: library
+            settings: SettingsStore.shared,
+            library: LibraryStore.shared
         )
-    }()
-
-    convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1120, height: 700),
+            contentRect: NSRect(x: 0, y: 0, width: 1040, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.title = "Lumora"
+        window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        window.isMovableByWindowBackground = true
-        window.minSize = NSSize(width: 640, height: 400)
-        window.center()
-        self.init(window: window)
+        window.isMovableByWindowBackground = false
+        window.backgroundColor = .black
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.collectionBehavior.insert(.fullScreenPrimary)
+        window.minSize = NSSize(width: 420, height: 260)
+        window.tabbingMode = .disallowed
+        super.init(window: window)
         window.delegate = self
         contentViewController = playerViewController
+        window.setContentSize(NSSize(width: 1040, height: 620))
+        window.center()
+        playerViewController.applyInitialVolume()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        playerViewController.tearDown()
+        onClose?(self)
     }
 
     func open(_ urls: [URL]) {
-        guard !urls.isEmpty else { return }
+        let items = expand(urls).map { PlaybackItem(url: $0) }
+        guard !items.isEmpty else { return }
         showWindow(nil)
-        Task { @MainActor in
-            var resolved: [PlaybackItem] = []
-            for url in urls {
-                if YouTubeResolver.isYouTubeURL(url) {
-                    if let stream = await YouTubeResolver.resolve(url, toolPath: settings.ytDLPPath) {
-                        resolved.append(PlaybackItem(url: stream, title: url.absoluteString, kind: .network))
-                    } else {
-                        presentError(title: "YouTube resolution failed", message: "Install yt-dlp or set its path in Settings.")
-                    }
-                } else {
-                    resolved.append(PlaybackItem(url: url))
-                }
-            }
-            guard !resolved.isEmpty else { return }
-            playlist.add(resolved, playFirst: playlist.items.isEmpty)
-            if playlist.items.count == resolved.count {
-                playCurrent()
+        let firstNewIndex = playlist.items.count
+        playlist.add(items)
+        playlist.select(at: firstNewIndex)
+        playCurrent()
+    }
+
+    func enqueue(_ urls: [URL]) {
+        let items = expand(urls).map { PlaybackItem(url: $0) }
+        guard !items.isEmpty else { return }
+        let wasEmpty = playlist.items.isEmpty
+        playlist.add(items)
+        if wasEmpty {
+            playCurrent()
+        }
+    }
+
+    func promptForURL() {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Open URL"
+        alert.informativeText = "Paste a link to a video, stream (HLS, RTSP, HTTP) or a YouTube page."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 380, height: 24))
+        field.placeholderString = "https://"
+        if let clip = NSPasteboard.general.string(forType: .string),
+           let url = URL(string: clip.trimmingCharacters(in: .whitespacesAndNewlines)),
+           let scheme = url.scheme?.lowercased(), ["http", "https", "rtsp", "rtmp", "ftp", "smb"].contains(scheme) {
+            field.stringValue = url.absoluteString
+        }
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Play")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            MainActor.assumeIsolated {
+                guard let url = URL(string: text), url.scheme != nil else { return }
+                self?.open([url])
             }
         }
     }
 
     func playCurrent() {
         guard let item = playlist.current else { return }
-        let resumeTime = settings.rememberLastPosition ? library.record(for: item.url)?.resumeTime ?? 0 : 0
-        engine.load(item, resumeTime: resumeTime)
-        window?.title = item.title
+        let record = library.record(for: item.url)
+        var resume: TimeInterval = 0
+        if settings.rememberLastPosition, let record, !record.watched {
+            resume = record.resumeTime
+        }
+        engine.load(item, resumeTime: resume)
     }
 
     func playNext(auto: Bool) {
-        guard let item = playlist.next(auto: auto) else {
-            engine.stop()
-            window?.title = "Lumora"
+        guard playlist.next(auto: auto) != nil else {
+            if auto {
+                engine.pause()
+            }
             return
         }
         playCurrent()
-        _ = item
     }
 
     func playPrevious() {
+        if engine.currentTime > 5 {
+            engine.seek(to: 0)
+            return
+        }
         guard playlist.previous() != nil else { return }
         playCurrent()
     }
 
-    private func presentError(title: String, message: String) {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = title
-        alert.informativeText = message
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+    private func expand(_ urls: [URL]) -> [URL] {
+        var result: [URL] = []
+        for url in urls {
+            guard url.isFileURL else {
+                result.append(url)
+                continue
+            }
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { continue }
+            if isDirectory.boolValue {
+                let enumerator = FileManager.default.enumerator(
+                    at: url,
+                    includingPropertiesForKeys: [.isRegularFileKey],
+                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                )
+                var found: [URL] = []
+                while let file = enumerator?.nextObject() as? URL {
+                    if isMedia(file) {
+                        found.append(file)
+                    }
+                }
+                found.sort { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+                result.append(contentsOf: found)
+            } else if isMedia(url) || !SubtitleService.isSubtitleFile(url) {
+                result.append(url)
+            }
+        }
+        return result
+    }
+
+    private func isMedia(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        if Self.mediaExtensions.contains(ext) {
+            return true
+        }
+        guard let type = UTType(filenameExtension: ext) else { return false }
+        return type.conforms(to: .audiovisualContent)
     }
 }

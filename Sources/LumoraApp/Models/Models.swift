@@ -1,5 +1,4 @@
 import Foundation
-import AVFoundation
 
 enum RepeatMode: String, Codable, CaseIterable {
     case off
@@ -77,20 +76,6 @@ struct LibraryRecord: Codable, Identifiable, Hashable {
     }
 }
 
-struct SubtitleCue: Codable, Identifiable, Hashable {
-    let id: UUID
-    var start: TimeInterval
-    var end: TimeInterval
-    var text: String
-
-    init(id: UUID = UUID(), start: TimeInterval, end: TimeInterval, text: String) {
-        self.id = id
-        self.start = start
-        self.end = end
-        self.text = text
-    }
-}
-
 struct SubtitleTrack: Identifiable, Hashable {
     var id: String
     var title: String
@@ -99,11 +84,54 @@ struct SubtitleTrack: Identifiable, Hashable {
     var url: URL?
 }
 
+enum TrackKind: String {
+    case video
+    case audio
+    case subtitle = "sub"
+}
+
 struct MediaTrack: Identifiable, Hashable {
-    var id: Int32
+    var id: Int
+    var kind: TrackKind
+    var title: String?
+    var language: String?
+    var codec: String?
+    var isExternal: Bool
+    var isSelected: Bool
+    var channels: String?
+
+    var displayName: String {
+        var parts: [String] = []
+        if let title, !title.isEmpty {
+            parts.append(title)
+        }
+        if let language, !language.isEmpty {
+            let name = Locale.current.localizedString(forLanguageCode: language) ?? language
+            if !parts.contains(name) {
+                parts.append(name)
+            }
+        }
+        if parts.isEmpty {
+            parts.append("Track \(id)")
+        }
+        var details: [String] = []
+        if let codec, !codec.isEmpty {
+            details.append(codec.uppercased())
+        }
+        if let channels, !channels.isEmpty {
+            details.append(channels)
+        }
+        if isExternal {
+            details.append("external")
+        }
+        let base = parts.joined(separator: " · ")
+        return details.isEmpty ? base : "\(base)  (\(details.joined(separator: ", ")))"
+    }
+}
+
+struct Chapter: Hashable {
     var title: String
-    var language: String
-    var mediaType: AVMediaType
+    var time: TimeInterval
 }
 
 struct SubtitleSearchResult: Identifiable, Hashable {

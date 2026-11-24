@@ -219,3 +219,21 @@ Implementation note: current app is a working AVFoundation baseline. The final s
 5. Update this file after every completed section.
 6. Keep code comments out unless explicitly requested.
 7. Do not commit; user has not asked.
+
+## 2026-11-24 — libmpv engine swap + player UI rebuild
+
+- [x] libmpv playback engine (`PlaybackEngine` over libmpv, `CMPV` system library target, Homebrew mpv 0.42 for dev)
+- [x] Rendering: mpv render API into `CAOpenGLLayer` (`VideoView.swift`); Metal/libplacebo path still to do
+- [x] MKV/ASS/multi-audio/chapters verified with generated test file; frames verified by GL readback
+- [x] Native ASS subtitles, sidecar auto-load, `sub-add`, sub delay/scale via mpv
+- [x] Speed persists across pause; exact A-B loop (`ab-loop`); frame step both ways; equalizer, video adjustments, hwdec settings now live
+- [x] YouTube via mpv ytdl hook (full quality, stable URL for resume); old `YouTubeResolver` removed
+- [x] Thumbnails via headless mpv (`vo=image`), latest-request-wins queue, SHA256 cache keys, 14-day prune
+- [x] New player UI: floating HUD control bar, custom timeline (hover knob, chapter ticks, A-B region), thumbnail preview at cursor, OSD toasts, empty state with Continue Watching, title overlay, auto-hide incl. cursor and window buttons, mini player, keep on top, context menu
+- [x] Menu fixes: Edit menu added, no more ⌘C/⌘P/⌘S/⌘Space collisions, arrow-key shortcuts real
+- [x] Window/controller lifecycle: extra windows retained, close stops playback and frees mpv
+- [x] Converter: never overwrites source, `hvc1` tag fixed
+- [x] Subtitle download filename/language sanitised; auto-search sends only local filename
+- [!] AirPlay video / PiP: removed (were AVPlayer-only); needs phase 4 work
+- [!] App links Homebrew `libmpv.2.dylib`; must bundle LGPL build before distributing
+- Debug harness (DEBUG builds only): `LUMORA_OPEN`, `LUMORA_SNAPSHOT_DIR`, `LUMORA_SNAPSHOT_STEPS`, `LUMORA_MUTE`, `LUMORA_GL_PROBE`, `LUMORA_MPV_LOG`

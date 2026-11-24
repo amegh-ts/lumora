@@ -55,15 +55,15 @@ final class PlaylistStore: ObservableObject {
 
     func move(from source: Int, to destination: Int) {
         guard items.indices.contains(source), items.indices.contains(destination), source != destination else { return }
-        let oldCurrent = currentIndex
         let item = items.remove(at: source)
         items.insert(item, at: destination)
+        guard let oldCurrent = currentIndex else { return }
         if oldCurrent == source {
             currentIndex = destination
-        } else if source < oldCurrent! && destination >= oldCurrent! {
-            currentIndex = oldCurrent! - 1
-        } else if source > oldCurrent! && destination <= oldCurrent! {
-            currentIndex = oldCurrent! + 1
+        } else if source < oldCurrent && destination >= oldCurrent {
+            currentIndex = oldCurrent - 1
+        } else if source > oldCurrent && destination <= oldCurrent {
+            currentIndex = oldCurrent + 1
         }
     }
 

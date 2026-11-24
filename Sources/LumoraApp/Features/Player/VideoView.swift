@@ -1,96 +1,230 @@
 import AppKit
-import AVFoundation
-import CoreImage
+import OpenGL.GL3
+import CMPV
 
-final class VideoView: NSView {
-    var player: AVPlayer? {
-        didSet {
-            playerLayer.player = player
+final class MPVVideoLayer: CAOpenGLLayer, @unchecked Sendable {
+    private let mpv: OpaquePointer
+    private var renderContext: OpaquePointer?
+    private var glContext: CGLContextObj?
+    private var updateBox: Unmanaged<WeakBox<MPVVideoLayer>>?
+    private var isTornDown = false
+    var onReady: (@Sendable () -> Void)?
+
+    init(mpv: OpaquePointer) {
+        self.mpv = mpv
+        super.init()
+        isAsynchronous = false
+        isOpaque = true
+        backgroundColor = NSColor.black.cgColor
+        needsDisplayOnBoundsChange = true
+        autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
+    }
+
+    override init(layer: Any) {
+        guard let other = layer as? MPVVideoLayer else {
+            fatalError("Unexpected layer copy")
         }
-    }
-
-    var gravity: AVLayerVideoGravity = .resizeAspect {
-        didSet {
-            playerLayer.videoGravity = gravity
-        }
-    }
-
-    var cropRect: NSRect = .zero {
-        didSet {
-            updateCrop()
-        }
-    }
-
-    var rotation: Double = 0 {
-        didSet {
-            playerLayer.transform = CATransform3DMakeRotation(CGFloat(rotation) * .pi / 180, 0, 0, 1)
-        }
-    }
-
-    var brightness: Double = 0 {
-        didSet { updateFilters() }
-    }
-
-    var contrast: Double = 1 {
-        didSet { updateFilters() }
-    }
-
-    var saturation: Double = 1 {
-        didSet { updateFilters() }
-    }
-
-    private var playerLayer: AVPlayerLayer {
-        guard let playerLayer = layer as? AVPlayerLayer else {
-            fatalError("VideoView requires AVPlayerLayer")
-        }
-        return playerLayer
-    }
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        commonInit()
+        mpv = other.mpv
+        super.init(layer: layer)
     }
 
     required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        commonInit()
+        fatalError("init(coder:) has not been implemented")
     }
 
-    private func commonInit() {
-        wantsLayer = true
-        let layer = AVPlayerLayer()
-        layer.videoGravity = .resizeAspect
-        layer.backgroundColor = NSColor.black.cgColor
-        self.layer = layer
-        updateCrop()
+    override func copyCGLPixelFormat(forDisplayMask mask: UInt32) -> CGLPixelFormatObj {
+        let attributes: [CGLPixelFormatAttribute] = [
+            kCGLPFAOpenGLProfile, CGLPixelFormatAttribute(UInt32(kCGLOGLPVersion_3_2_Core.rawValue)),
+            kCGLPFAColorSize, CGLPixelFormatAttribute(24),
+            kCGLPFAAlphaSize, CGLPixelFormatAttribute(8),
+            kCGLPFADoubleBuffer,
+            kCGLPFAAccelerated,
+            kCGLPFAAllowOfflineRenderers,
+            kCGLPFASupportsAutomaticGraphicsSwitching,
+            CGLPixelFormatAttribute(0)
+        ]
+        var pixelFormat: CGLPixelFormatObj?
+        var count: GLint = 0
+        CGLChoosePixelFormat(attributes, &pixelFormat, &count)
+        if let pixelFormat {
+            return pixelFormat
+        }
+        return super.copyCGLPixelFormat(forDisplayMask: mask)
     }
 
-    override func layout() {
-        super.layout()
-        playerLayer.frame = bounds
+    override func copyCGLContext(forPixelFormat pixelFormat: CGLPixelFormatObj) -> CGLContextObj {
+        let context = super.copyCGLContext(forPixelFormat: pixelFormat)
+        var swapInterval: GLint = 1
+        CGLSetParameter(context, kCGLCPSwapInterval, &swapInterval)
+        glContext = context
+        return context
     }
 
-    private func updateCrop() {
-        if cropRect.width <= 0 || cropRect.height <= 0 {
-            playerLayer.contentsRect = NSRect(x: 0, y: 0, width: 1, height: 1)
+    override func canDraw(
+        inCGLContext ctx: CGLContextObj,
+        pixelFormat pf: CGLPixelFormatObj,
+        forLayerTime t: CFTimeInterval,
+        displayTime ts: UnsafePointer<CVTimeStamp>?
+    ) -> Bool {
+        !isTornDown
+    }
+
+    override func draw(
+        inCGLContext ctx: CGLContextObj,
+        pixelFormat pf: CGLPixelFormatObj,
+        forLayerTime t: CFTimeInterval,
+        displayTime ts: UnsafePointer<CVTimeStamp>?
+    ) {
+        CGLSetCurrentContext(ctx)
+        if renderContext == nil, !isTornDown {
+            createRenderContext()
+        }
+        var framebuffer: GLint = 0
+        glGetIntegerv(GLenum(GL_DRAW_FRAMEBUFFER_BINDING), &framebuffer)
+        var viewport = [GLint](repeating: 0, count: 4)
+        glGetIntegerv(GLenum(GL_VIEWPORT), &viewport)
+
+        if let renderContext {
+            var fbo = mpv_opengl_fbo(fbo: Int32(framebuffer), w: viewport[2], h: viewport[3], internal_format: 0)
+            var flip: Int32 = 1
+            withUnsafeMutablePointer(to: &fbo) { fboPointer in
+                withUnsafeMutablePointer(to: &flip) { flipPointer in
+                    var params = [
+                        mpv_render_param(type: MPV_RENDER_PARAM_OPENGL_FBO, data: UnsafeMutableRawPointer(fboPointer)),
+                        mpv_render_param(type: MPV_RENDER_PARAM_FLIP_Y, data: UnsafeMutableRawPointer(flipPointer)),
+                        mpv_render_param()
+                    ]
+                    mpv_render_context_render(renderContext, &params)
+                }
+            }
+            #if DEBUG
+            currentFBO = framebuffer
+            probe(width: viewport[2], height: viewport[3])
+            #endif
         } else {
-            playerLayer.contentsRect = cropRect
+            glClearColor(0, 0, 0, 1)
+            glClear(GLbitfield(GL_COLOR_BUFFER_BIT))
         }
+        glFlush()
     }
 
-    private func updateFilters() {
-        if brightness == 0, contrast == 1, saturation == 1 {
-            playerLayer.filters = nil
-            return
+    #if DEBUG
+    private var probeCount = 0
+    private var currentFBO: GLint = 0
+
+    private func probe(width: GLint, height: GLint) {
+        guard ProcessInfo.processInfo.environment["LUMORA_GL_PROBE"] != nil else { return }
+        probeCount += 1
+        guard probeCount % 30 == 0 else { return }
+        glBindFramebuffer(GLenum(GL_READ_FRAMEBUFFER), GLuint(currentFBO))
+        var samples: [String] = []
+        for (fx, fy) in [(0.25, 0.5), (0.5, 0.5), (0.75, 0.5), (0.5, 0.3), (0.5, 0.7)] {
+            var pixel = [UInt8](repeating: 0, count: 4)
+            glReadPixels(GLint(Double(width) * fx), GLint(Double(height) * fy), 1, 1, GLenum(GL_RGBA), GLenum(GL_UNSIGNED_BYTE), &pixel)
+            samples.append("\(pixel[0]),\(pixel[1]),\(pixel[2])")
         }
-        let filter = CIFilter(
-            name: "CIColorControls",
-            parameters: [
-                kCIInputBrightnessKey: brightness,
-                kCIInputContrastKey: contrast,
-                kCIInputSaturationKey: saturation
-            ]
+        print("[gl] fbo=\(currentFBO) frame=\(probeCount) size=\(width)x\(height) bounds=\(bounds.size) samples=\(samples)")
+    }
+    #endif
+
+    private func createRenderContext() {
+        var initParams = mpv_opengl_init_params(
+            get_proc_address: { _, name in
+                guard let name else { return nil }
+                let symbol = CFStringCreateWithCString(kCFAllocatorDefault, name, CFStringBuiltInEncodings.ASCII.rawValue)
+                let bundle = CFBundleGetBundleWithIdentifier("com.apple.opengl" as CFString)
+                return CFBundleGetFunctionPointerForName(bundle, symbol)
+            },
+            get_proc_address_ctx: nil
         )
-        playerLayer.filters = filter.map { [$0] }
+        let apiType = strdup("opengl")
+        defer { free(apiType) }
+        var created: OpaquePointer?
+        withUnsafeMutablePointer(to: &initParams) { initPointer in
+            var params = [
+                mpv_render_param(type: MPV_RENDER_PARAM_API_TYPE, data: UnsafeMutableRawPointer(apiType)),
+                mpv_render_param(type: MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, data: UnsafeMutableRawPointer(initPointer)),
+                mpv_render_param()
+            ]
+            if mpv_render_context_create(&created, mpv, &params) < 0 {
+                created = nil
+            }
+        }
+        guard let created else { return }
+        renderContext = created
+        if let onReady {
+            DispatchQueue.main.async(execute: onReady)
+        }
+        let box = Unmanaged.passRetained(WeakBox(self))
+        updateBox = box
+        mpv_render_context_set_update_callback(created, { context in
+            guard let context else { return }
+            let box = Unmanaged<WeakBox<MPVVideoLayer>>.fromOpaque(context).takeUnretainedValue()
+            DispatchQueue.main.async {
+                box.object?.setNeedsDisplay()
+            }
+        }, box.toOpaque())
+    }
+
+    func tearDown() {
+        guard !isTornDown else { return }
+        isTornDown = true
+        guard let renderContext else { return }
+        if let glContext {
+            CGLSetCurrentContext(glContext)
+        }
+        mpv_render_context_set_update_callback(renderContext, nil, nil)
+        mpv_render_context_free(renderContext)
+        self.renderContext = nil
+        updateBox?.release()
+        updateBox = nil
+        CGLSetCurrentContext(nil)
+    }
+}
+
+final class VideoView: NSView {
+    let videoLayer: MPVVideoLayer
+
+    init(engine: PlaybackEngine) {
+        videoLayer = MPVVideoLayer(mpv: engine.handle)
+        super.init(frame: .zero)
+        let box = WeakBox(engine)
+        videoLayer.onReady = {
+            MainActor.assumeIsolated {
+                box.object?.renderContextReady()
+            }
+        }
+        wantsLayer = true
+        layerContentsRedrawPolicy = .duringViewResize
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func makeBackingLayer() -> CALayer {
+        videoLayer
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        videoLayer.contentsScale = window?.backingScaleFactor ?? 2
+        videoLayer.display()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        videoLayer.contentsScale = window?.backingScaleFactor ?? 2
+        videoLayer.setNeedsDisplay()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        videoLayer.setNeedsDisplay()
+    }
+
+    func tearDown() {
+        videoLayer.tearDown()
     }
 }

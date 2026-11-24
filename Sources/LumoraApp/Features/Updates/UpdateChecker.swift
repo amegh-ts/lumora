@@ -66,6 +66,10 @@ final class UpdateChecker {
             alert.informativeText = message
             alert.addButton(withTitle: "OK")
         }
+        if case .available = info {
+            return
+        }
+        alert.runModal()
     }
 
     private func extract(_ tag: String, from xml: String) -> String? {
