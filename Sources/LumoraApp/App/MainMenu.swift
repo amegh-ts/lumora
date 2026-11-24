@@ -113,7 +113,7 @@ enum MainMenuBuilder {
         let down = String(Character(UnicodeScalar(NSDownArrowFunctionKey)!))
 
         let app = submenu(main, "Lumora")
-        add(app, "About Lumora", #selector(NSApplication.orderFrontStandardAboutPanel(_:)))
+        add(app, "About Lumora", #selector(AppDelegate.showAbout(_:)))
         add(app, "Check for Updates…", #selector(AppDelegate.checkForUpdates(_:)))
         app.addItem(.separator())
         add(app, "Settings…", #selector(AppDelegate.showSettings(_:)), ",", symbol: "gearshape")

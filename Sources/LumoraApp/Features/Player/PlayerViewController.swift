@@ -326,6 +326,16 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
         installSettingsBindings()
 
+        engine.onTitleChange = { [weak self] item in
+            guard let self else { return }
+            self.titleBar.title = item.title
+            self.view.window?.title = item.title
+            self.playlist.rename(id: item.id, to: item.title)
+            if !self.sidebar.isHidden {
+                self.sidebar.reload()
+            }
+            NowPlayingService.shared.playerDidUpdateTime(self)
+        }
         engine.onLoad = { [weak self] item in
             guard let self else { return }
             self.lastSavedTime = 0

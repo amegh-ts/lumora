@@ -53,6 +53,8 @@ final class PlaybackEngine: ObservableObject {
     private(set) var currentItem: PlaybackItem?
     var onLoad: ((PlaybackItem) -> Void)?
     var onFileLoaded: ((PlaybackItem) -> Void)?
+    /// A stream's real title arrived (yt-dlp or stream metadata), replacing its link.
+    var onTitleChange: ((PlaybackItem) -> Void)?
     var onFinish: (() -> Void)?
     var onError: ((String) -> Void)?
     var onScreenshot: ((URL?) -> Void)?
@@ -209,6 +211,7 @@ final class PlaybackEngine: ObservableObject {
         observe("demuxer-cache-state", MPV_FORMAT_NODE)
         observe("metadata", MPV_FORMAT_NODE)
         observe("partially-seekable", MPV_FORMAT_FLAG)
+        observe("media-title", MPV_FORMAT_STRING)
         observe("width", MPV_FORMAT_INT64)
         observe("height", MPV_FORMAT_INT64)
         observe("audio-device-list", MPV_FORMAT_NODE)
@@ -929,6 +932,17 @@ final class PlaybackEngine: ObservableObject {
                 ranges.count != bufferedRanges.count
                 || zip(ranges, bufferedRanges).contains { abs($0.lowerBound - $1.lowerBound) > 0.5 || abs($0.upperBound - $1.upperBound) > 0.5 }
             if changed { bufferedRanges = ranges }
+        case "media-title":
+            // Streams open under their link; use the title mpv learns (yt-dlp, HLS, ICY).
+            guard hasValue, isStream, var item = currentItem,
+                let raw = property.data.assumingMemoryBound(to: UnsafePointer<CChar>?.self).pointee
+            else { return }
+            let title = String(cString: raw).trimmingCharacters(in: .whitespacesAndNewlines)
+            let looksLikeLink = title.contains("://") || title == item.url.lastPathComponent
+            guard !title.isEmpty, !looksLikeLink, title != item.title else { return }
+            item.title = title
+            currentItem = item
+            onTitleChange?(item)
         case "width":
             sourceSize.width = hasValue ? CGFloat(property.data.assumingMemoryBound(to: Int64.self).pointee) : 0
         case "height":

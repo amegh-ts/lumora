@@ -210,9 +210,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         guard let window else { return }
         let alert = NSAlert()
         alert.messageText = "Open URL"
-        alert.informativeText = "Paste a link to a video, stream (HLS, RTSP, HTTP) or a YouTube page."
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 380, height: 24))
+        alert.informativeText =
+            "Paste a link to a video, a stream (HLS, RTSP, HTTP) or a page on YouTube and other sites. YouTube playlist links add every video."
+        alert.icon = NSImage(systemSymbolName: "link.circle.fill", accessibilityDescription: nil)
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 400, height: 24))
         field.placeholderString = "https://"
+        field.setAccessibilityLabel("Link")
+        // A link already on the clipboard is filled in and selected, ready to replace.
+        if let copied = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            copied.count < 2048, Self.normalizedLink(copied) != nil
+        {
+            field.stringValue = copied
+        }
         alert.accessoryView = field
         alert.addButton(withTitle: "Play")
         alert.addButton(withTitle: "Cancel")
@@ -221,15 +230,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             guard response == .alertFirstButtonReturn else { return }
             let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             MainActor.assumeIsolated {
-                guard let url = URL(string: text), let scheme = url.scheme?.lowercased(),
-                    ["http", "https", "rtsp", "rtmp", "rtmps", "mms", "ftp", "smb", "udp", "rtp", "srt"].contains(scheme)
-                else {
+                guard let url = Self.normalizedLink(text) else {
                     self?.showInvalidURL(text)
                     return
                 }
                 self?.open([url])
             }
         }
+        field.currentEditor()?.selectAll(nil)
+    }
+
+    /// A playable link from typed text: adds https:// to "youtube.com/…"-style input and accepts
+    /// only the network schemes Lumora plays.
+    static func normalizedLink(_ text: String) -> URL? {
+        var candidate = text
+        if !candidate.contains("://"), candidate.contains("."), !candidate.contains(" ") {
+            candidate = "https://" + candidate
+        }
+        guard let url = URL(string: candidate), let scheme = url.scheme?.lowercased(), url.host?.isEmpty == false,
+            PlaylistImporter.allowedSchemes.contains(scheme)
+        else { return nil }
+        return url
     }
 
     func playCurrent() {
