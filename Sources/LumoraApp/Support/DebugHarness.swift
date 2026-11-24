@@ -77,6 +77,30 @@ enum DebugMode {
                     }
                 }
             }
+            // LUMORA_SUBSTYLE="box:#FFD60A:80" → subtitle background, colour and position (settings untouched).
+            if let entry = environment["LUMORA_SUBSTYLE"] {
+                let parts = entry.split(separator: ":").map(String.init)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    guard parts.count == 3, let player = NSApp.windows.compactMap({ $0.contentViewController as? PlayerViewController }).first else { return }
+                    player.engine.setSubtitleStyle(
+                        font: "Avenir Next", color: parts[1], background: SubtitleBackground(rawValue: parts[0]) ?? .outline,
+                        position: Double(parts[2]) ?? 100)
+                }
+            }
+            // LUMORA_CROP="2:2.35" → at 2 s crop to 2.35:1 and reshape the window.
+            if let entry = environment["LUMORA_CROP"] {
+                let parts = entry.split(separator: ":").compactMap { Double($0) }
+                if parts.count == 2 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + parts[0]) {
+                        guard let player = NSApp.windows.compactMap({ $0.contentViewController as? PlayerViewController }).first else { return }
+                        player.engine.setCrop(aspect: parts[1])
+                        player.reshapeWindowForPicture()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                            print("[debug] crop size=\(player.engine.videoSize) content=\(player.view.window?.contentView?.frame.size ?? .zero)")
+                        }
+                    }
+                }
+            }
             // LUMORA_ACTIONS="2:actualSize:,3:showMediaInfo:" → send menu actions to the player.
             for entry in (environment["LUMORA_ACTIONS"] ?? "").split(separator: ",") {
                 let parts = entry.split(separator: ":", maxSplits: 1)
@@ -157,6 +181,12 @@ enum DebugMode {
             if let player = window.contentViewController as? PlayerViewController {
                 let engine = player.engine
                 print("[debug] controlsShowing=\(player.areControlsShowing)")
+                print(
+                    "[debug] audioDevices=\(player.engine.audioDevices.map(\.description)) current=\(player.engine.audioDevice) deinterlace=\(player.engine.deinterlace)"
+                )
+                print(
+                    "[debug] playlist index=\(player.debugPlaylistIndex.map(String.init) ?? "-") items=\(player.debugPlaylistTitles.prefix(6)) count=\(player.debugPlaylistTitles.count)"
+                )
                 print(
                     "[debug] title=\(engine.currentItem?.title ?? "-") t=\(engine.currentTime) d=\(engine.duration) playing=\(engine.isPlaying) media=\(engine.hasMedia) size=\(engine.videoSize) audio=\(engine.audioTracks.map(\.displayName)) subs=\(engine.subtitleTracks.map(\.displayName)) chapters=\(engine.chapters.count) status=\(engine.statusMessage) live=\(engine.isLive) picture=\(engine.hasPicture) buffered=\(engine.bufferedRanges.map { String(format: "%.0f-%.0f", $0.lowerBound, $0.upperBound) }) tags=\(engine.mediaTags) content=\(window.contentLayoutRect.size) aspect=\(window.contentAspectRatio)"
                 )

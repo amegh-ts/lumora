@@ -10,6 +10,10 @@ enum DynamicMenu {
     case videoSize
     case repeatMode
     case streamQuality
+    case audioDevice
+    case aspectRatio
+    case crop
+    case deinterlace
 }
 
 extension PlayerViewController {
@@ -86,6 +90,46 @@ extension PlayerViewController {
                 ClosureMenuItem("Default for New Videos…") {
                     (NSApp.delegate as? AppDelegate)?.showVideoSettings(nil)
                 })
+        case .audioDevice:
+            if engine.audioDevices.isEmpty {
+                menu.addItem(ClosureMenuItem("System Default", checked: true) {})
+            }
+            for device in engine.audioDevices {
+                menu.addItem(
+                    ClosureMenuItem(device.description, checked: engine.audioDevice == device.name) { [weak self] in
+                        self?.settings.audioDevice = device.name
+                        self?.osd.show("Audio to \(device.description)", symbol: "hifispeaker")
+                    })
+            }
+        case .aspectRatio:
+            let options: [(String, Double?)] = [("Original", nil), ("16:9", 16.0 / 9), ("4:3", 4.0 / 3), ("2.35:1", 2.35), ("1.85:1", 1.85), ("1:1", 1)]
+            for (title, ratio) in options {
+                menu.addItem(
+                    ClosureMenuItem(title, checked: engine.aspectOverride == ratio) { [weak self] in
+                        self?.engine.setAspectOverride(ratio)
+                        self?.osd.show("Aspect ratio: \(title)", symbol: "aspectratio")
+                        self?.reshapeWindowForPicture()
+                    })
+            }
+        case .crop:
+            let options: [(String, Double?)] = [("None", nil), ("16:9", 16.0 / 9), ("2.35:1", 2.35), ("1.85:1", 1.85), ("4:3", 4.0 / 3)]
+            for (title, ratio) in options {
+                menu.addItem(
+                    ClosureMenuItem(title, checked: engine.cropAspect == ratio) { [weak self] in
+                        self?.engine.setCrop(aspect: ratio)
+                        self?.osd.show(ratio == nil ? "Crop off" : "Crop: \(title)", symbol: "crop")
+                        self?.reshapeWindowForPicture()
+                    })
+            }
+        case .deinterlace:
+            let options = [("Off", "no"), ("Automatic", "auto"), ("On", "yes")]
+            for (title, mode) in options {
+                menu.addItem(
+                    ClosureMenuItem(title, checked: engine.deinterlace == mode) { [weak self] in
+                        self?.engine.setDeinterlace(mode)
+                        self?.osd.show("Deinterlace: \(title)", symbol: "rectangle.split.3x1")
+                    })
+            }
         case .videoSize:
             let options: [(VideoGravityPreference, String)] = [(.aspect, "Fit"), (.fill, "Fill (Crop Edges)"), (.stretch, "Stretch")]
             for (preference, title) in options {
@@ -147,6 +191,11 @@ extension PlayerViewController {
     @objc func resetSubtitleSize(_ sender: Any?) {
         settings.subtitleSize = 24
         osd.show("Subtitle size reset", symbol: "textformat.size")
+    }
+
+    @objc func toggleVolumeBoost(_ sender: Any?) {
+        settings.volumeBoost.toggle()
+        osd.show(settings.volumeBoost ? "Volume boost on (up to 200%)" : "Volume boost off", symbol: "speaker.wave.3.fill")
     }
 
     @objc func showMediaInfo(_ sender: Any?) {
