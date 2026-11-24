@@ -26,6 +26,12 @@ enum AppPaths {
         applicationSupport.appendingPathComponent("Screenshots", isDirectory: true)
     }
 
+    /// mpv shader and ICC caches, so the renderer doesn't recompile shaders on every launch.
+    static var mpvCache: URL {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        return caches.appendingPathComponent("com.lumora.player/mpv", isDirectory: true)
+    }
+
     static var logs: URL {
         applicationSupport.appendingPathComponent("Logs", isDirectory: true)
     }
@@ -37,7 +43,8 @@ enum AppPaths {
             thumbnailCache,
             subtitleCache,
             screenshots,
-            logs
+            logs,
+            mpvCache
         ]
         for directory in directories {
             try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)

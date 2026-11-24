@@ -12,8 +12,9 @@ enum HUD {
         return NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(configuration)
     }
 
-    static func panel(cornerRadius: CGFloat) -> HUDPanel {
-        HUDPanel(cornerRadius: cornerRadius)
+    /// `.glass` only for the main control bar; everything else uses the cheap `.plain` tint.
+    static func panel(cornerRadius: CGFloat, style: HUDPanel.Style = .plain) -> HUDPanel {
+        HUDPanel(cornerRadius: cornerRadius, style: style)
     }
 
     static func label(size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = primaryText, monospaced: Bool = false) -> NSTextField {
@@ -29,19 +30,36 @@ enum HUD {
     }
 }
 
-/// Floating panel background: Liquid Glass (NSGlassEffectView) on macOS 26 and later, a dark HUD
-/// blur before that. Add subviews to `content`, which always sits inside the glass or blur.
+/// Floating panel background. Add subviews to `content`.
+/// - `.glass`: Liquid Glass (NSGlassEffectView) on macOS 26+, HUD blur before. Used only by the
+///   control bar, the one surface that sits on moving video for long.
+/// - `.plain`: a flat translucent tint with no blur or glass — no extra compositing work.
 @MainActor
 final class HUDPanel: NSView {
+    enum Style {
+        case glass
+        case plain
+    }
+
     let content = NSView()
 
-    init(cornerRadius: CGFloat) {
+    init(cornerRadius: CGFloat, style: Style) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         appearance = NSAppearance(named: .vibrantDark)
         content.translatesAutoresizingMaskIntoConstraints = false
         let background: NSView
-        if #available(macOS 26.0, *) {
+        if style == .plain {
+            let tint = NSView()
+            tint.wantsLayer = true
+            tint.layer?.backgroundColor = NSColor(white: 0.08, alpha: 0.82).cgColor
+            tint.layer?.cornerRadius = cornerRadius
+            tint.layer?.cornerCurve = .continuous
+            tint.layer?.borderWidth = 0.5
+            tint.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
+            tint.addSubview(content)
+            background = tint
+        } else if #available(macOS 26.0, *) {
             let glass = NSGlassEffectView()
             glass.cornerRadius = cornerRadius
             glass.style = .regular
@@ -277,14 +295,30 @@ final class OSDView: NSView {
         nil
     }
 
+    private var currentSymbol: String?
+
     func show(_ text: String, symbol: String? = nil, duration: TimeInterval = 1.3) {
-        label.stringValue = text
-        iconView.image = symbol.flatMap { HUD.symbol($0, size: 14, weight: .semibold) }
-        iconView.isHidden = symbol == nil
         hideWorkItem?.cancel()
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.12
-            animator().alphaValue = 1
+        let alreadyShowing = alphaValue > 0.99
+        if label.stringValue != text {
+            label.stringValue = text
+        }
+        // Repeated messages (volume while scrolling) only move the hide deadline.
+        if symbol != currentSymbol {
+            currentSymbol = symbol
+            iconView.image = symbol.flatMap { HUD.symbol($0, size: 14, weight: .semibold) }
+            iconView.isHidden = symbol == nil
+        }
+        if !alreadyShowing {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.12
+                animator().alphaValue = 1
+            }
+            NSAccessibility.post(
+                element: NSApp as Any,
+                notification: .announcementRequested,
+                userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.medium.rawValue]
+            )
         }
         let work = DispatchWorkItem { [weak self] in
             NSAnimationContext.runAnimationGroup { context in

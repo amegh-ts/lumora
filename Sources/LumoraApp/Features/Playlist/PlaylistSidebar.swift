@@ -89,11 +89,12 @@ final class PlaylistSidebar: NSView, NSTableViewDataSource, NSTableViewDelegate 
         reload()
     }
 
+    /// The playing item is marked by its icon, not the table selection, so "Remove selected"
+    /// only ever removes what the user picked.
     func reload() {
+        let selection = tableView.selectedRowIndexes
         tableView.reloadData()
-        if let currentIndex = store.currentIndex {
-            tableView.selectRowIndexes(IndexSet(integer: currentIndex), byExtendingSelection: false)
-        }
+        tableView.selectRowIndexes(selection.filteredIndexSet { $0 < store.items.count }, byExtendingSelection: false)
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {

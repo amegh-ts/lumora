@@ -25,7 +25,7 @@ final class SettingsWindowController: NSWindowController {
             ("Video", "tv", SettingsPanes.video),
             ("Audio", "speaker.wave.2", SettingsPanes.audio),
             ("Subtitles", "captions.bubble", SettingsPanes.subtitles),
-            ("Network", "network", SettingsPanes.network),
+            ("Tools", "wrench.adjustable", SettingsPanes.network),
             ("Advanced", "wrench.and.screwdriver", SettingsPanes.advanced)
         ]
         for (title, symbol, build) in panes {
@@ -259,7 +259,7 @@ enum SettingsPanes {
                 "Volume",
                 rows: [
                     Form.row(
-                        "Volume", detail: "Also changed with the player's volume control.",
+                        "Default volume", detail: "For new player windows. Each window keeps its own volume.",
                         control: Form.slider(
                             range: 0...1, step: 0.01,
                             format: { "\(Int(($0 * 100).rounded()))%" },
@@ -295,7 +295,7 @@ enum SettingsPanes {
                         range: 14...48, step: 1, format: { "\(Int($0)) pt" },
                         { settings.subtitleSize }, { settings.subtitleSize = $0 })),
                 Form.row(
-                    "Delay", detail: "Positive values show subtitles later.",
+                    "Default delay", detail: "Applied to each new file. Z / X adjust the current file only.",
                     control: Form.slider(
                         range: -10...10, step: 0.1, format: { String(format: "%+.1f s", $0) },
                         { settings.subtitleDelay }, { settings.subtitleDelay = $0 }))
@@ -326,7 +326,20 @@ enum SettingsPanes {
                         "API key",
                         control: Form.textField(
                             placeholder: "Paste your API key", secure: true, width: 220,
-                            { settings.openSubtitlesAPIKey }, { settings.openSubtitlesAPIKey = $0 })),
+                            { settings.openSubtitlesAPIKey },
+                            { value in
+                                settings.openSubtitlesAPIKey = value
+                                // The Keychain can refuse (locked, access denied); don't fail silently.
+                                if (Keychain.string(for: "opensubtitles-api-key") ?? "") != value {
+                                    let alert = NSAlert()
+                                    alert.alertStyle = .warning
+                                    alert.messageText = "The API key couldn't be saved"
+                                    alert.informativeText = "macOS didn't allow Lumora to store it in the Keychain. Unlock your login Keychain and try again."
+                                    if let window = SettingsWindowController.shared.window {
+                                        alert.beginSheetModal(for: window)
+                                    }
+                                }
+                            })),
                     Form.row(
                         "Don't have a key?",
                         control: Form.button("Get a Free API Key") {

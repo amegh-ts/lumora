@@ -110,6 +110,15 @@ extension PlayerViewController {
     }
 
     @objc func addSubtitleFile(_ sender: Any?) { chooseSubtitleFile() }
+    @objc func audioEarlier(_ sender: Any?) { adjustAudioDelay(-0.1) }
+    @objc func audioLater(_ sender: Any?) { adjustAudioDelay(0.1) }
+    @objc func resetAudioDelay(_ sender: Any?) { adjustAudioDelay(nil) }
+
+    /// Audio/video sync for the current file.
+    private func adjustAudioDelay(_ delta: TimeInterval?) {
+        engine.adjustAudioDelay(by: delta)
+        osd.show(String(format: "Audio delay %+.1f s", engine.audioDelay), symbol: "waveform")
+    }
     @objc func subtitleEarlier(_ sender: Any?) { adjustSubtitleDelay(-0.1) }
     @objc func subtitleLater(_ sender: Any?) { adjustSubtitleDelay(0.1) }
     @objc func resetSubtitleDelay(_ sender: Any?) { adjustSubtitleDelay(nil) }

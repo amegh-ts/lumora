@@ -22,6 +22,13 @@ final class DynamicMenuFiller: NSObject, NSMenuDelegate {
         self.kind = kind
     }
 
+    /// No shortcuts in here; tells AppKit not to rebuild this menu on every key press.
+    func menuHasKeyEquivalent(
+        _ menu: NSMenu, for event: NSEvent, target: AutoreleasingUnsafeMutablePointer<AnyObject?>, action: UnsafeMutablePointer<Selector?>
+    ) -> Bool {
+        false
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         MainActor.assumeIsolated {
             menu.removeAllItems()
@@ -41,6 +48,12 @@ final class RecentMenuFiller: NSObject, NSMenuDelegate {
 
     init(open: @escaping (URL) -> Void) {
         self.open = open
+    }
+
+    func menuHasKeyEquivalent(
+        _ menu: NSMenu, for event: NSEvent, target: AutoreleasingUnsafeMutablePointer<AnyObject?>, action: UnsafeMutablePointer<Selector?>
+    ) -> Bool {
+        false
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -174,6 +187,10 @@ enum MainMenuBuilder {
         audio.addItem(.separator())
         dynamic(audio, "Audio Track", .audioTracks, symbol: "waveform")
         add(audio, "Next Audio Track", #selector(PlayerViewController.cycleAudio(_:)), "a", [])
+        audio.addItem(.separator())
+        add(audio, "Audio Earlier (−0.1 s)", #selector(PlayerViewController.audioEarlier(_:)), "-", [])
+        add(audio, "Audio Later (+0.1 s)", #selector(PlayerViewController.audioLater(_:)), "=", [.shift])
+        add(audio, "Reset Audio Delay", #selector(PlayerViewController.resetAudioDelay(_:)))
         audio.addItem(.separator())
         add(audio, "Equalizer…", #selector(AppDelegate.showAudioSettings(_:)), symbol: "slider.vertical.3")
 

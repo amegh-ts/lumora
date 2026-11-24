@@ -74,6 +74,50 @@ struct LibraryRecord: Codable, Identifiable, Hashable {
         self.watched = watched
         self.bookmarks = bookmarks
     }
+
+    /// Lenient: fields added in later versions default instead of failing the whole library.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        url = try container.decode(URL.self, forKey: .url)
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? url.lastPathComponent
+        resumeTime = try container.decodeIfPresent(TimeInterval.self, forKey: .resumeTime) ?? 0
+        duration = try container.decodeIfPresent(TimeInterval.self, forKey: .duration) ?? 0
+        lastPlayed = try container.decodeIfPresent(Date.self, forKey: .lastPlayed) ?? .distantPast
+        watched = try container.decodeIfPresent(Bool.self, forKey: .watched) ?? false
+        bookmarks = (try? container.decodeIfPresent([Bookmark].self, forKey: .bookmarks)) ?? []
+    }
+}
+
+/// Decodes an array element by element, skipping entries that fail instead of losing all of them.
+struct LossyArray<Element: Decodable>: Decodable {
+    let elements: [Element]
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        var result: [Element] = []
+        while !container.isAtEnd {
+            if let element = try? container.decode(Element.self) {
+                result.append(element)
+            } else {
+                _ = try? container.decode(DiscardedValue.self)
+            }
+        }
+        elements = result
+    }
+
+    private struct DiscardedValue: Decodable {}
+}
+
+enum DataFileBackup {
+    /// Moves an unreadable data file aside so the next save can't silently replace it.
+    static func preserve(_ url: URL) {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let backup = url.deletingPathExtension()
+            .appendingPathExtension("unreadable-\(formatter.string(from: Date())).json")
+        try? FileManager.default.moveItem(at: url, to: backup)
+    }
 }
 
 struct SubtitleTrack: Identifiable, Hashable {

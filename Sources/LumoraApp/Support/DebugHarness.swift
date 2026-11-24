@@ -1,3 +1,17 @@
+import Foundation
+
+/// Test-only switches. Always false in release builds.
+enum DebugMode {
+    /// LUMORA_BACKGROUND=1: never activate or bring windows forward, keep rendering while covered.
+    static var background: Bool {
+        #if DEBUG
+            return ProcessInfo.processInfo.environment["LUMORA_BACKGROUND"] != nil
+        #else
+            return false
+        #endif
+    }
+}
+
 #if DEBUG
     import AppKit
     import MediaPlayer
@@ -78,6 +92,7 @@
             else { return }
             if let player = window.contentViewController as? PlayerViewController {
                 let engine = player.engine
+                print("[debug] controlsShowing=\(player.areControlsShowing)")
                 print(
                     "[debug] title=\(engine.currentItem?.title ?? "-") t=\(engine.currentTime) d=\(engine.duration) playing=\(engine.isPlaying) media=\(engine.hasMedia) size=\(engine.videoSize) audio=\(engine.audioTracks.map(\.displayName)) subs=\(engine.subtitleTracks.map(\.displayName)) chapters=\(engine.chapters.count) status=\(engine.statusMessage)"
                 )

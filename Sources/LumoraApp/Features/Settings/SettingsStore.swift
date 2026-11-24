@@ -74,6 +74,37 @@ final class SettingsStore: ObservableObject {
         var contrast: Double = 1
         var saturation: Double = 1
         var renderer: VideoRenderer?
+
+        init() {}
+
+        /// Lenient: a missing or unknown field keeps its default instead of resetting everything.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+                (try? c.decodeIfPresent(T.self, forKey: key)) ?? fallback
+            }
+            let d = Snapshot()
+            volume = value(.volume, d.volume)
+            rememberLastPosition = value(.rememberLastPosition, d.rememberLastPosition)
+            autoplayNext = value(.autoplayNext, d.autoplayNext)
+            repeatMode = value(.repeatMode, d.repeatMode)
+            shuffle = value(.shuffle, d.shuffle)
+            videoGravity = value(.videoGravity, d.videoGravity)
+            subtitleSize = value(.subtitleSize, d.subtitleSize)
+            subtitleDelay = value(.subtitleDelay, d.subtitleDelay)
+            autoDownloadSubtitles = value(.autoDownloadSubtitles, d.autoDownloadSubtitles)
+            subtitleLanguages = value(.subtitleLanguages, d.subtitleLanguages)
+            openSubtitlesAPIKey = value(.openSubtitlesAPIKey, d.openSubtitlesAPIKey)
+            ytDLPPath = value(.ytDLPPath, d.ytDLPPath)
+            ffmpegPath = value(.ffmpegPath, d.ffmpegPath)
+            checkForUpdates = value(.checkForUpdates, d.checkForUpdates)
+            hardwareDecoding = value(.hardwareDecoding, d.hardwareDecoding)
+            equalizerGains = value(.equalizerGains, d.equalizerGains)
+            brightness = value(.brightness, d.brightness)
+            contrast = value(.contrast, d.contrast)
+            saturation = value(.saturation, d.saturation)
+            renderer = value(.renderer, d.renderer)
+        }
     }
 
     private var migratedSecretsOutOfFile = false
@@ -115,8 +146,13 @@ final class SettingsStore: ObservableObject {
     func load() {
         isLoading = true
         defer { isLoading = false }
+        // The API key lives in the Keychain, independent of settings.json being readable.
+        openSubtitlesAPIKey = Keychain.string(for: Self.openSubtitlesAccount) ?? ""
         guard let data = try? Data(contentsOf: AppPaths.settingsFile) else { return }
-        guard let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else { return }
+        guard let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else {
+            DataFileBackup.preserve(AppPaths.settingsFile)
+            return
+        }
         volume = snapshot.volume
         rememberLastPosition = snapshot.rememberLastPosition
         autoplayNext = snapshot.autoplayNext
@@ -144,33 +180,49 @@ final class SettingsStore: ObservableObject {
     }
 
     func save() {
-        persist()
+        flush()
     }
 
+    private var persistWork: DispatchWorkItem?
+
+    /// Debounced: sliders, trackpad volume and typing change settings many times a second.
     private func persist() {
         guard !isLoading else { return }
-        let snapshot = Snapshot(
-            volume: volume,
-            rememberLastPosition: rememberLastPosition,
-            autoplayNext: autoplayNext,
-            repeatMode: repeatMode,
-            shuffle: shuffle,
-            videoGravity: videoGravity,
-            subtitleSize: subtitleSize,
-            subtitleDelay: subtitleDelay,
-            autoDownloadSubtitles: autoDownloadSubtitles,
-            subtitleLanguages: subtitleLanguages,
-            openSubtitlesAPIKey: "",
-            ytDLPPath: ytDLPPath,
-            ffmpegPath: ffmpegPath,
-            checkForUpdates: checkForUpdates,
-            hardwareDecoding: hardwareDecoding,
-            equalizerGains: equalizerGains,
-            brightness: brightness,
-            contrast: contrast,
-            saturation: saturation,
-            renderer: renderer
-        )
+        persistWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.writeSettings() }
+        persistWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    /// Writes immediately (quit, reset).
+    func flush() {
+        persistWork?.cancel()
+        persistWork = nil
+        writeSettings()
+    }
+
+    private func writeSettings() {
+        var snapshot = Snapshot()
+        snapshot.volume = volume
+        snapshot.rememberLastPosition = rememberLastPosition
+        snapshot.autoplayNext = autoplayNext
+        snapshot.repeatMode = repeatMode
+        snapshot.shuffle = shuffle
+        snapshot.videoGravity = videoGravity
+        snapshot.subtitleSize = subtitleSize
+        snapshot.subtitleDelay = subtitleDelay
+        snapshot.autoDownloadSubtitles = autoDownloadSubtitles
+        snapshot.subtitleLanguages = subtitleLanguages
+        snapshot.openSubtitlesAPIKey = ""
+        snapshot.ytDLPPath = ytDLPPath
+        snapshot.ffmpegPath = ffmpegPath
+        snapshot.checkForUpdates = checkForUpdates
+        snapshot.hardwareDecoding = hardwareDecoding
+        snapshot.equalizerGains = equalizerGains
+        snapshot.brightness = brightness
+        snapshot.contrast = contrast
+        snapshot.saturation = saturation
+        snapshot.renderer = renderer
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         AppPaths.ensureDirectories()
         try? data.write(to: AppPaths.settingsFile, options: .atomic)

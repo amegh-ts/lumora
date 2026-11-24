@@ -3,11 +3,18 @@ import AppKit
 @MainActor
 final class TimelineView: NSView {
     var duration: TimeInterval = 0 {
-        didSet { needsDisplay = true }
+        didSet {
+            if duration != oldValue { needsDisplay = true }
+        }
     }
+    /// Redraws only when the progress moves by at least one physical pixel.
     var currentTime: TimeInterval = 0 {
         didSet {
-            if !isDragging { needsDisplay = true }
+            guard !isDragging else { return }
+            let scale = window?.backingScaleFactor ?? 2
+            if abs(x(for: currentTime) - x(for: oldValue)) * scale >= 1 {
+                needsDisplay = true
+            }
         }
     }
     var loopA: TimeInterval? {
@@ -101,7 +108,23 @@ final class TimelineView: NSView {
     }
 
     override func accessibilityValue() -> Any? {
-        TimeFormatter.string(currentTime)
+        duration > 0
+            ? "\(TimeFormatter.string(currentTime)) of \(TimeFormatter.string(duration))"
+            : TimeFormatter.string(currentTime)
+    }
+
+    override func isAccessibilityElement() -> Bool { true }
+
+    override func accessibilityPerformIncrement() -> Bool {
+        guard duration > 0 else { return false }
+        onScrub?(min(duration, currentTime + 10), true)
+        return true
+    }
+
+    override func accessibilityPerformDecrement() -> Bool {
+        guard duration > 0 else { return false }
+        onScrub?(max(0, currentTime - 10), true)
+        return true
     }
 
     private func scrub(with event: NSEvent, finished: Bool) {
@@ -155,7 +178,7 @@ final class TimelineView: NSView {
         NSBezierPath(roundedRect: progressRect, xRadius: radius, yRadius: radius).fill()
 
         if duration > 0 {
-            NSColor.black.withAlphaComponent(0.55).setFill()
+            NSColor.white.withAlphaComponent(0.55).setFill()
             for chapter in chapters where chapter.time > 0.5 && chapter.time < duration - 0.5 {
                 let cx = x(for: chapter.time)
                 NSRect(x: cx - 1, y: track.minY, width: 2, height: height).fill()

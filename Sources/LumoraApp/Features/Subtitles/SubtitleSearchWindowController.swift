@@ -16,10 +16,21 @@ final class SubtitleSearchWindowController: NSWindowController {
         self.init(window: window)
         contentViewController = SubtitleSearchViewController(settings: SettingsStore.shared)
     }
+
+    /// Opens with the current video's name already in the search field.
+    override func showWindow(_ sender: Any?) {
+        let player =
+            (NSApp.mainWindow?.contentViewController as? PlayerViewController)
+            ?? NSApp.windows.compactMap { $0.contentViewController as? PlayerViewController }.first
+        if let item = player?.engine.currentItem, let search = contentViewController as? SubtitleSearchViewController {
+            search.prefill(item.url.isFileURL ? item.url.deletingPathExtension().lastPathComponent : item.title)
+        }
+        super.showWindow(sender)
+    }
 }
 
 @MainActor
-private final class SubtitleSearchViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
+final class SubtitleSearchViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     private let settings: SettingsStore
     private let queryField = NSTextField(frame: NSRect(x: 0, y: 0, width: 330, height: 24))
     private let statusField = NSTextField(labelWithString: "Enter a title to search OpenSubtitles.")
@@ -35,11 +46,20 @@ private final class SubtitleSearchViewController: NSViewController, NSTableViewD
         fatalError("init(coder:) has not been implemented")
     }
 
+    func prefill(_ query: String) {
+        _ = view
+        if queryField.stringValue.isEmpty || !results.isEmpty {
+            queryField.stringValue = query
+        }
+    }
+
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 440))
         view = root
 
-        queryField.placeholderString = "Movie title"
+        queryField.placeholderString = "Movie or episode title"
+        queryField.target = self
+        queryField.action = #selector(search(_:))
         let searchButton = NSButton(title: "Search", target: self, action: #selector(search(_:)))
         searchButton.bezelStyle = .rounded
 

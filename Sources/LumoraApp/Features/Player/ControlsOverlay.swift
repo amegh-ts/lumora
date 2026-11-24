@@ -24,7 +24,7 @@ final class ControlsOverlay: NSView {
     var onAction: ((ControlsAction) -> Void)?
     var menuProvider: ((ControlsMenu) -> NSMenu)?
 
-    private let panel = HUD.panel(cornerRadius: 16)
+    private let panel = HUD.panel(cornerRadius: 16, style: .glass)
     let timeline = TimelineView(frame: .zero)
     private let timeLabel = HUD.label(size: 11.5, weight: .medium, monospaced: true)
     private let remainingLabel = HUD.label(size: 11.5, weight: .medium, color: HUD.secondaryText, monospaced: true)
@@ -44,7 +44,10 @@ final class ControlsOverlay: NSView {
 
     private var duration: TimeInterval = 0
     private var currentTime: TimeInterval = 0
-    private var showsRemaining = true
+    private static let showsRemainingKey = "lumora.controls.showsRemaining"
+    private var showsRemaining = UserDefaults.standard.object(forKey: ControlsOverlay.showsRemainingKey) as? Bool ?? true
+    private var hasNeighbours = false
+    private var lastVolumeSymbol = ""
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -148,8 +151,8 @@ final class ControlsOverlay: NSView {
     override func layout() {
         super.layout()
         let width = bounds.width
-        previousButton.isHidden = width < 600
-        nextButton.isHidden = width < 600
+        previousButton.isHidden = width < 600 || !hasNeighbours
+        nextButton.isHidden = width < 600 || !hasNeighbours
         volumeSlider.isHidden = width < 520
         speedButton.isHidden = width < 460
         playlistButton.isHidden = width < 400
@@ -161,18 +164,27 @@ final class ControlsOverlay: NSView {
         return bounds.contains(point)
     }
 
+    /// Called up to 10×/s while playing; only touches views whose content actually changes.
     func update(time: TimeInterval, duration: TimeInterval) {
         currentTime = time
         self.duration = duration
         timeline.duration = duration
         timeline.currentTime = time
-        timeLabel.stringValue = TimeFormatter.string(time)
+        setIfChanged(timeLabel, TimeFormatter.string(time))
+        let remaining: String
         if duration <= 0 {
-            remainingLabel.stringValue = "--:--"
+            remaining = "--:--"
         } else if showsRemaining {
-            remainingLabel.stringValue = "-" + TimeFormatter.string(max(0, duration - time))
+            remaining = "-" + TimeFormatter.string(max(0, duration - time))
         } else {
-            remainingLabel.stringValue = TimeFormatter.string(duration)
+            remaining = TimeFormatter.string(duration)
+        }
+        setIfChanged(remainingLabel, remaining)
+    }
+
+    private func setIfChanged(_ label: NSTextField, _ text: String) {
+        if label.stringValue != text {
+            label.stringValue = text
         }
     }
 
@@ -194,8 +206,14 @@ final class ControlsOverlay: NSView {
         } else {
             symbol = "speaker.wave.3.fill"
         }
-        volumeButton.setSymbol(symbol, size: 13)
-        volumeButton.toolTip = muted ? "Unmute" : "Mute"
+        if symbol != lastVolumeSymbol {
+            lastVolumeSymbol = symbol
+            volumeButton.setSymbol(symbol, size: 13)
+        }
+        let label = muted ? "Unmute" : "Mute"
+        volumeButton.toolTip = label
+        volumeButton.setAccessibilityLabel(label)
+        volumeSlider.setAccessibilityValueDescription("\(Int((volume * 100).rounded())) percent")
     }
 
     func update(rate: Float) {
@@ -204,14 +222,18 @@ final class ControlsOverlay: NSView {
     }
 
     func update(hasPlaylistNeighbours: Bool, hasTracks: Bool, isFullscreen: Bool) {
-        previousButton.isEnabled = hasPlaylistNeighbours
-        nextButton.isEnabled = hasPlaylistNeighbours
+        // With a single item Previous/Next are hidden rather than shown disabled.
+        if hasNeighbours != hasPlaylistNeighbours {
+            hasNeighbours = hasPlaylistNeighbours
+            needsLayout = true
+        }
         tracksButton.isEnabled = hasTracks
         fullscreenButton.setSymbol(
             isFullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
             size: 13
         )
         fullscreenButton.toolTip = isFullscreen ? "Exit full screen" : "Full screen"
+        fullscreenButton.setAccessibilityLabel(fullscreenButton.toolTip)
     }
 
     func update(loopA: TimeInterval?, loopB: TimeInterval?, chapters: [Chapter]) {
@@ -232,6 +254,7 @@ final class ControlsOverlay: NSView {
 
     @objc private func toggleRemaining() {
         showsRemaining.toggle()
+        UserDefaults.standard.set(showsRemaining, forKey: Self.showsRemainingKey)
         update(time: currentTime, duration: duration)
     }
 }
