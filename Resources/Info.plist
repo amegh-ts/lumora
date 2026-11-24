@@ -9,41 +9,112 @@
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
-			<key>CFBundleTypeExtensions</key>
-			<array>
-				<string>mp4</string>
-				<string>m4v</string>
-				<string>mov</string>
-				<string>mkv</string>
-				<string>avi</string>
-				<string>webm</string>
-				<string>wmv</string>
-				<string>flv</string>
-				<string>mpg</string>
-				<string>mpeg</string>
-				<string>ts</string>
-				<string>m2ts</string>
-				<string>vob</string>
-				<string>3gp</string>
-				<string>mp3</string>
-				<string>m4a</string>
-				<string>aac</string>
-				<string>wav</string>
-				<string>flac</string>
-				<string>ogg</string>
-				<string>opus</string>
-				<string>aiff</string>
-				<string>srt</string>
-				<string>vtt</string>
-				<string>ass</string>
-				<string>ssa</string>
-			</array>
 			<key>CFBundleTypeName</key>
-			<string>Media</string>
+			<string>Video</string>
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
 			<key>LSHandlerRank</key>
-			<string>Owner</string>
+			<string>Default</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.matroska.mkv</string>
+				<string>org.webmproject.webm</string>
+				<string>public.avi</string>
+				<string>com.microsoft.windows-media-wmv</string>
+				<string>com.adobe.flash.video</string>
+				<string>org.xiph.ogv</string>
+				<string>com.real.realmedia</string>
+				<string>com.real.realmedia-vbr</string>
+				<string>com.divx.divx</string>
+				<string>com.lumora.player.vob</string>
+				<string>public.mpeg</string>
+				<string>public.mpeg-2-video</string>
+				<string>public.mpeg-2-transport-stream</string>
+				<string>public.avchd-mpeg-2-transport-stream</string>
+				<string>com.microsoft.advanced-systems-format</string>
+				<string>org.smpte.mxf</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>QuickTime-compatible Video</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.mpeg-4</string>
+				<string>com.apple.m4v-video</string>
+				<string>com.apple.quicktime-movie</string>
+				<string>public.3gpp</string>
+				<string>public.3gpp2</string>
+				<string>public.movie</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Audio</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.mp3</string>
+				<string>com.apple.m4a-audio</string>
+				<string>public.aac-audio</string>
+				<string>com.microsoft.waveform-audio</string>
+				<string>org.xiph.flac</string>
+				<string>org.xiph.ogg-audio</string>
+				<string>public.aiff-audio</string>
+				<string>com.microsoft.windows-media-wma</string>
+				<string>public.ac3-audio</string>
+				<string>public.audio</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Audio (Matroska, APE, DTS)</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Default</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.matroska.mka</string>
+				<string>com.monkeysaudio.ape</string>
+				<string>com.lumora.player.dts</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Playlist</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.m3u-playlist</string>
+				<string>public.pls-playlist</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Subtitles</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.lumora.player.srt</string>
+				<string>com.lumora.player.ass</string>
+				<string>com.lumora.player.ssa</string>
+				<string>com.lumora.player.sub</string>
+				<string>org.w3.webvtt</string>
+			</array>
 		</dict>
 	</array>
 	<key>CFBundleExecutable</key>
@@ -59,9 +130,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.2.0</string>
+	<string>0.3.0</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>3</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>NSHighResolutionCapable</key>
@@ -76,5 +147,207 @@
 	<string>https://github.com/amegh-ts/lumora/releases/latest/download/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>4/y5/mTg5oqm9MHLiH+u8Jh1eEt8UubW3v4VSXlOELU=</string>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.movie</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Matroska Video</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.matroska.mkv</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>mkv</string>
+					<string>mk3d</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>video/x-matroska</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.audio</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Matroska Audio</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.matroska.mka</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>mka</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>audio/x-matroska</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.movie</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>DivX Video</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.divx.divx</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>divx</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>video/divx</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.movie</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>DVD Video Object</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.lumora.player.vob</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>vob</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>video/dvd</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.audio</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Monkey's Audio</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.monkeysaudio.ape</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>ape</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>audio/x-ape</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.audio</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>DTS Audio</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.lumora.player.dts</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>dts</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>audio/vnd.dts</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>SubRip Subtitles</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.lumora.player.srt</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>srt</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/x-subrip</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Advanced SubStation Alpha Subtitles</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.lumora.player.ass</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>ass</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>SubStation Alpha Subtitles</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.lumora.player.ssa</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>ssa</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>MicroDVD / VobSub Subtitles</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.lumora.player.sub</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>sub</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>

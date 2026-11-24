@@ -33,6 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
+        #if DEBUG
+        FileHandle.standardError.write("[debug] open urls=\(urls.map(\.lastPathComponent)) controllers=\(controllers.count) key=\(NSApp.keyWindow != nil)\n".data(using: .utf8)!)
+        #endif
         activeController().open(urls)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -61,7 +64,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func newController() -> MainWindowController {
         let controller = MainWindowController()
+        if let previous = controllers.last?.window, let window = controller.window {
+            let topLeft = NSPoint(x: previous.frame.minX + 28, y: previous.frame.maxY - 28)
+            window.setFrameTopLeftPoint(topLeft)
+            if let screen = previous.screen ?? NSScreen.main {
+                window.setFrame(window.constrainFrameRect(window.frame, to: screen), display: false)
+            }
+        }
+        #if DEBUG
+        FileHandle.standardError.write("[debug] new player window (total \(controllers.count + 1))\n".data(using: .utf8)!)
+        #endif
         controller.onClose = { [weak self] closed in
+            #if DEBUG
+            FileHandle.standardError.write("[debug] player window closed\n".data(using: .utf8)!)
+            #endif
             self?.controllers.removeAll { $0 === closed }
         }
         controllers.append(controller)

@@ -30,6 +30,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     private var thumbnailToken = 0
     private var scrollAccumulator: CGFloat = 0
     private var miniPlayerRestoreFrame: NSRect?
+    private var pendingSubtitles: [URL] = []
 
     var windowController: MainWindowController? {
         view.window?.windowController as? MainWindowController
@@ -228,6 +229,11 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         engine.onFileLoaded = { [weak self] item in
             guard let self else { return }
             self.applySettings()
+            if !self.pendingSubtitles.isEmpty {
+                let subtitles = self.pendingSubtitles
+                self.pendingSubtitles = []
+                self.addSubtitles(subtitles, forNextFile: false)
+            }
             if self.settings.autoDownloadSubtitles, item.url.isFileURL {
                 self.autoDownloadSubtitles(for: item)
             }
@@ -714,15 +720,21 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     }
 
     func playerRootView(_ view: PlayerRootView, didReceiveURLs urls: [URL]) {
-        let subtitles = urls.filter(SubtitleService.isSubtitleFile)
-        if engine.hasMedia, !subtitles.isEmpty {
-            subtitles.forEach(engine.addSubtitle)
-            osd.show("Subtitle added", symbol: "captions.bubble.fill")
+        windowController?.open(urls)
+    }
+
+    /// Adds subtitle files now, or after the next file loads when a video is being opened with them.
+    func addSubtitles(_ urls: [URL], forNextFile: Bool) {
+        if forNextFile {
+            pendingSubtitles.append(contentsOf: urls)
+            return
         }
-        let media = urls.filter { !SubtitleService.isSubtitleFile($0) }
-        if !media.isEmpty {
-            windowController?.open(media)
+        guard engine.hasMedia else {
+            osd.show("Open a video first, then add subtitles", symbol: "captions.bubble", duration: 2)
+            return
         }
+        urls.forEach(engine.addSubtitle)
+        osd.show(urls.count == 1 ? "Subtitle added" : "\(urls.count) subtitles added", symbol: "captions.bubble.fill")
     }
 
     func playerRootView(_ view: PlayerRootView, handleKeyDown event: NSEvent) -> Bool {
