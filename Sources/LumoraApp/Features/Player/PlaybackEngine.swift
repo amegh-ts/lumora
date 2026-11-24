@@ -1,6 +1,7 @@
 import AppKit
-import Combine
 import CMPV
+import Combine
+import Darwin
 
 @MainActor
 final class PlaybackEngine: ObservableObject {
@@ -40,6 +41,8 @@ final class PlaybackEngine: ObservableObject {
     private(set) var renderer: VideoRenderer
     private var voConfigured = false
     private var pendingOpenGLSwitch = false
+    private var suspendedVideoID: Int?
+    var isVideoSuspended: Bool { suspendedVideoID != nil }
     var onRendererFailure: (() -> Void)?
     private var pendingLoad: [String]?
     private var isAtEnd = false
@@ -111,6 +114,17 @@ final class PlaybackEngine: ObservableObject {
         for (name, value) in options + videoOptions {
             MPV.setOption(handle, name, value)
         }
+        #if DEBUG
+            // LUMORA_MPV_OPTS="name=value;name=value" overrides options for experiments.
+            if let overrides = ProcessInfo.processInfo.environment["LUMORA_MPV_OPTS"] {
+                for pair in overrides.split(separator: ";") {
+                    let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+                    if parts.count == 2 {
+                        MPV.setOption(handle, parts[0], parts[1])
+                    }
+                }
+            }
+        #endif
         let status = mpv_initialize(handle)
         if status < 0 {
             fatalError("libmpv failed to start: \(MPV.errorString(status))")
@@ -236,6 +250,7 @@ final class PlaybackEngine: ObservableObject {
         isAtEnd = false
         hasMedia = true
         statusMessage = "Opening \(item.title)…"
+        suspendedVideoID = nil
         let target = item.url.isFileURL ? item.url.path : item.url.absoluteString
         var args = ["loadfile", target, "replace", "-1"]
         if resumeTime > 1 {
@@ -256,6 +271,31 @@ final class PlaybackEngine: ObservableObject {
         if let pendingLoad {
             self.pendingLoad = nil
             command(pendingLoad)
+        }
+    }
+
+    /// Turns the video output off while nobody can see it (audio keeps playing). mpv then
+    /// destroys its renderer and GPU textures; `resumeVideo()` brings video back at the same spot.
+    func suspendVideo() {
+        // Without an audio track nothing would keep playback going, so leave video-only files alone.
+        guard hasMedia, suspendedVideoID == nil, !audioTracks.isEmpty,
+            let track = videoTracks.first(where: { $0.isSelected })
+        else { return }
+        suspendedVideoID = track.id
+        setProperty("vid", "no")
+        Self.releaseFreeMemory(after: 1.5)
+    }
+
+    func resumeVideo() {
+        guard let id = suspendedVideoID else { return }
+        suspendedVideoID = nil
+        setProperty("vid", String(id))
+    }
+
+    /// Hands freed malloc pages back to the system so the memory figure drops right away.
+    nonisolated static func releaseFreeMemory(after delay: TimeInterval = 0) {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) {
+            malloc_zone_pressure_relief(nil, 0)
         }
     }
 
@@ -287,6 +327,8 @@ final class PlaybackEngine: ObservableObject {
         videoTracks = []
         chapters = []
         statusMessage = ""
+        suspendedVideoID = nil
+        Self.releaseFreeMemory(after: 1)
     }
 
     func seek(to time: TimeInterval, exact: Bool = true) {
@@ -457,6 +499,7 @@ final class PlaybackEngine: ObservableObject {
             handle(property: property)
         case MPV_EVENT_FILE_LOADED:
             scheduleRendererCheck()
+            Self.releaseFreeMemory(after: 3)
             statusMessage = ""
             isAtEnd = false
             isPlaying = hasMedia && !isPaused
@@ -550,7 +593,8 @@ final class PlaybackEngine: ObservableObject {
     private func scheduleRendererCheck() {
         guard renderer == .metal else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-            guard let self, self.renderer == .metal, self.hasMedia, !self.isShutDown else { return }
+            guard let self, self.renderer == .metal, self.hasMedia, !self.isShutDown, self.suspendedVideoID == nil
+            else { return }
             // A failed video output makes mpv deselect the video track, so check for any video track.
             if !self.videoTracks.isEmpty, !self.voConfigured {
                 self.onRendererFailure?()

@@ -31,6 +31,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     private var scrollAccumulator: CGFloat = 0
     var miniPlayerRestoreFrame: NSRect?
     private var pendingSubtitles: [URL] = []
+    private var suspendVideoWork: DispatchWorkItem?
+    /// How long the window must stay hidden before video is suspended to free GPU memory.
+    static let hiddenSuspendDelay: TimeInterval = 5
 
     var playlistCount: Int { playlist.items.count }
 
@@ -292,6 +295,13 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             }
             .store(in: &cancellables)
 
+        NotificationCenter.default.publisher(for: NSWindow.didChangeOcclusionStateNotification)
+            .sink { [weak self] note in
+                guard let self, let window = note.object as? NSWindow, window === self.view.window else { return }
+                self.windowVisibilityChanged(visible: window.occlusionState.contains(.visible))
+            }
+            .store(in: &cancellables)
+
         NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)
             .merge(with: NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification))
             .sink { [weak self] _ in self?.refreshControlState() }
@@ -408,6 +418,25 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             self.engine.addSubtitle(url)
             self.osd.show("Subtitle downloaded", symbol: "captions.bubble.fill")
         }
+    }
+
+    // MARK: - Hidden-window memory release
+
+    /// Minimized, on another Space or fully covered: after a short delay turn the video output off
+    /// (audio continues) so its GPU memory is freed; bring it back as soon as the window shows.
+    private func windowVisibilityChanged(visible: Bool) {
+        suspendVideoWork?.cancel()
+        suspendVideoWork = nil
+        if visible {
+            engine.resumeVideo()
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.view.window?.occlusionState.contains(.visible) == false else { return }
+            self.engine.suspendVideo()
+        }
+        suspendVideoWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.hiddenSuspendDelay, execute: work)
     }
 
     // MARK: - Chrome visibility

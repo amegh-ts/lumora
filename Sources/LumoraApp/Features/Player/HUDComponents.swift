@@ -12,19 +12,8 @@ enum HUD {
         return NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(configuration)
     }
 
-    static func panel(cornerRadius: CGFloat) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .hudWindow
-        view.blendingMode = .withinWindow
-        view.state = .active
-        view.appearance = NSAppearance(named: .vibrantDark)
-        view.wantsLayer = true
-        view.layer?.cornerRadius = cornerRadius
-        view.layer?.cornerCurve = .continuous
-        view.layer?.masksToBounds = true
-        view.layer?.borderWidth = 0.5
-        view.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
-        return view
+    static func panel(cornerRadius: CGFloat) -> HUDPanel {
+        HUDPanel(cornerRadius: cornerRadius)
     }
 
     static func label(size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = primaryText, monospaced: Bool = false) -> NSTextField {
@@ -38,6 +27,60 @@ enum HUD {
         field.translatesAutoresizingMaskIntoConstraints = false
         return field
     }
+}
+
+/// Floating panel background: Liquid Glass (NSGlassEffectView) on macOS 26 and later, a dark HUD
+/// blur before that. Add subviews to `content`, which always sits inside the glass or blur.
+@MainActor
+final class HUDPanel: NSView {
+    let content = NSView()
+
+    init(cornerRadius: CGFloat) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        appearance = NSAppearance(named: .vibrantDark)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        let background: NSView
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            glass.cornerRadius = cornerRadius
+            glass.style = .regular
+            glass.tintColor = NSColor.black.withAlphaComponent(0.35)
+            glass.contentView = content
+            background = glass
+        } else {
+            let blur = NSVisualEffectView()
+            blur.material = .hudWindow
+            blur.blendingMode = .withinWindow
+            blur.state = .active
+            blur.wantsLayer = true
+            blur.layer?.cornerRadius = cornerRadius
+            blur.layer?.cornerCurve = .continuous
+            blur.layer?.masksToBounds = true
+            blur.layer?.borderWidth = 0.5
+            blur.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
+            blur.addSubview(content)
+            background = blur
+        }
+        background.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(background)
+        NSLayoutConstraint.activate([
+            background.leadingAnchor.constraint(equalTo: leadingAnchor),
+            background.trailingAnchor.constraint(equalTo: trailingAnchor),
+            background.topAnchor.constraint(equalTo: topAnchor),
+            background.bottomAnchor.constraint(equalTo: bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor),
+            content.topAnchor.constraint(equalTo: topAnchor),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var mouseDownCanMoveWindow: Bool { false }
 }
 
 final class PassthroughVisualEffectView: NSVisualEffectView {
@@ -212,7 +255,7 @@ final class OSDView: NSView {
         let stack = NSStackView(views: [iconView, label])
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
-        panel.addSubview(stack)
+        panel.content.addSubview(stack)
         NSLayoutConstraint.activate([
             panel.leadingAnchor.constraint(equalTo: leadingAnchor),
             panel.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -275,9 +318,9 @@ final class ThumbnailPreviewView: NSView {
         timeLabel.alignment = .center
         chapterLabel.alignment = .center
         addSubview(panel)
-        panel.addSubview(imageView)
-        panel.addSubview(timeLabel)
-        panel.addSubview(chapterLabel)
+        panel.content.addSubview(imageView)
+        panel.content.addSubview(timeLabel)
+        panel.content.addSubview(chapterLabel)
         imageHeight = imageView.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             panel.leadingAnchor.constraint(equalTo: leadingAnchor),

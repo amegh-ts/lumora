@@ -18,6 +18,18 @@
                     player.engine.toggleMute()
                 }
             }
+            if let minimizeAt = environment["LUMORA_MINIMIZE_AT"].flatMap(Double.init) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + minimizeAt) {
+                    NSApp.windows.first { $0.windowController is MainWindowController }?.miniaturize(nil)
+                    print("[debug] minimized")
+                }
+            }
+            if let restoreAt = environment["LUMORA_RESTORE_AT"].flatMap(Double.init) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + restoreAt) {
+                    NSApp.windows.first { $0.windowController is MainWindowController }?.deminiaturize(nil)
+                    print("[debug] restored")
+                }
+            }
             guard let directory = environment["LUMORA_SNAPSHOT_DIR"] else { return }
             let steps = (environment["LUMORA_SNAPSHOT_STEPS"] ?? "2").split(separator: ",").compactMap { Double($0) }
             for (index, delay) in steps.enumerated() {
@@ -74,6 +86,11 @@
                 let shot = url.deletingPathExtension().path + "-vo.png"
                 MPV.command(player.engine.handle, ["screenshot-to-file", shot, "window"])
                 print("[debug] renderer=\(player.engine.renderer.rawValue) vo-shot=\(shot)")
+                let names = [
+                    "hwdec-current", "current-vo", "video-format", "demuxer-cache-state/total-bytes", "vd-lavc-threads", "swapchain-depth", "hwdec-extra-frames"
+                ]
+                let values = names.map { "\($0)=\(MPV.string(player.engine.handle, $0) ?? "-")" }
+                print("[debug] mpv \(values.joined(separator: " "))")
             }
             let info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
             print(

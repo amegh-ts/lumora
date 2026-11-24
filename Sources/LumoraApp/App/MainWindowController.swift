@@ -15,6 +15,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// Only the first player window can own this name; extra windows cascade from the existing one.
     static let frameAutosaveName = "LumoraPlayerWindow"
 
+    private static var debugRenderer: VideoRenderer? {
+        #if DEBUG
+            return ProcessInfo.processInfo.environment["LUMORA_RENDERER"].flatMap(VideoRenderer.init(rawValue:))
+        #else
+            return nil
+        #endif
+    }
+
     private let engine: PlaybackEngine
     private let playlist = PlaylistStore()
     private let settings = SettingsStore.shared
@@ -25,7 +33,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         engine = PlaybackEngine(
             ytdlPath: SettingsStore.shared.ytDLPPath,
             hardwareDecoding: SettingsStore.shared.hardwareDecoding,
-            renderer: SettingsStore.shared.renderer
+            renderer: Self.debugRenderer ?? SettingsStore.shared.renderer
         )
         playerViewController = PlayerViewController(
             engine: engine,

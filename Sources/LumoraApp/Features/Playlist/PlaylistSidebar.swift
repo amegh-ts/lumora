@@ -33,13 +33,15 @@ final class PlaylistSidebar: NSView, NSTableViewDataSource, NSTableViewDelegate 
     }
 
     private func commonInit() {
-        wantsLayer = true
         appearance = NSAppearance(named: .vibrantDark)
-        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.72).cgColor
-        layer?.cornerRadius = 14
-        layer?.cornerCurve = .continuous
-        layer?.borderWidth = 0.5
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
+        let panel = HUD.panel(cornerRadius: 14)
+        addSubview(panel)
+        NSLayoutConstraint.activate([
+            panel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            panel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            panel.topAnchor.constraint(equalTo: topAnchor),
+            panel.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("item"))
         column.title = "Media"
@@ -48,6 +50,7 @@ final class PlaylistSidebar: NSView, NSTableViewDataSource, NSTableViewDelegate 
         tableView.headerView = nil
         tableView.rowHeight = 34
         tableView.style = .inset
+        tableView.backgroundColor = .clear
         tableView.dataSource = self
         tableView.delegate = self
         tableView.target = self
@@ -74,7 +77,7 @@ final class PlaylistSidebar: NSView, NSTableViewDataSource, NSTableViewDelegate 
         stack.orientation = .vertical
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+        panel.content.addSubview(stack)
 
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),

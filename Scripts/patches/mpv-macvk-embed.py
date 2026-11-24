@@ -6,6 +6,8 @@ to the address of an NSView makes mpv add its CAMetalLayer to that view instead,
 size, scale and screen, and skip window, app-icon and activation-policy setup. That lets libmpv
 embedders use vo=gpu-next (libplacebo, HDR/EDR) instead of the OpenGL render API.
 
+It also stops rendering while the host window is fully hidden (occluded or minimized).
+
 Usage: mpv-macvk-embed.py <mpv source dir>
 """
 import pathlib
@@ -29,7 +31,8 @@ patch("video/out/mac_common.swift", [
         "    let swapLock: NSCondition = NSCondition()\n",
         "    let swapLock: NSCondition = NSCondition()\n"
         "    var embedView: NSView?\n"
-        "    var embedObservers: [NSObjectProtocol] = []\n",
+        "    var embedObservers: [NSObjectProtocol] = []\n"
+        "    var embedVisible: Bool = true\n",
     ),
     (
         "        DispatchQueue.main.sync {\n"
@@ -59,7 +62,7 @@ patch("video/out/mac_common.swift", [
     (
         "    @objc func isVisible() -> Bool {\n",
         "    @objc func isVisible() -> Bool {\n"
-        "        if embedView != nil { return true }\n",
+        "        if embedView != nil { return embedVisible || needsInitialDraw || option.vo.force_render }\n",
     ),
     (
         "    override func updateICCProfile() {\n",
@@ -78,6 +81,13 @@ patch("video/out/mac_common.swift", [
         "                                                 object: nil, queue: .main) { [weak self] note in\n"
         "            guard let self, let window = note.object as? NSWindow, window == self.embedView?.window else { return }\n"
         "            self.embeddedFrameChanged()\n"
+        "        })\n"
+        "        embedVisible = host.window?.occlusionState.contains(.visible) ?? true\n"
+        "        embedObservers.append(center.addObserver(forName: NSWindow.didChangeOcclusionStateNotification,\n"
+        "                                                 object: nil, queue: .main) { [weak self] note in\n"
+        "            guard let self, let window = note.object as? NSWindow, window == self.embedView?.window else { return }\n"
+        "            self.embedVisible = window.occlusionState.contains(.visible)\n"
+        "            self.flagEvents(VO_EVENT_EXPOSE)\n"
         "        })\n"
         "        embedObservers.append(center.addObserver(forName: NSWindow.didChangeScreenNotification,\n"
         "                                                 object: nil, queue: .main) { [weak self] note in\n"

@@ -88,11 +88,11 @@ final class ControlsOverlay: NSView {
             group.orientation = .horizontal
             group.alignment = .centerY
             group.translatesAutoresizingMaskIntoConstraints = false
-            panel.addSubview(group)
+            panel.content.addSubview(group)
         }
-        panel.addSubview(timeLabel)
-        panel.addSubview(timeline)
-        panel.addSubview(remainingLabel)
+        panel.content.addSubview(timeLabel)
+        panel.content.addSubview(timeline)
+        panel.content.addSubview(remainingLabel)
 
         NSLayoutConstraint.activate([
             panel.leadingAnchor.constraint(equalTo: leadingAnchor),
