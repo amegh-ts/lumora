@@ -13,7 +13,6 @@ private enum SettingsControlTag: Int {
     case hardwareDecoding
     case equalizerStart
     case checkForUpdates
-    case updateFeedURL
     case subtitleSize
     case subtitleDelay
     case autoDownloadSubtitles
@@ -87,8 +86,7 @@ final class SettingsWindowController: NSWindowController {
             row(label: "Repeat", control: repeatPopup),
             row(label: "Video scaling", control: gravityPopup),
             section("Updates"),
-            checkbox(title: "Check for updates", tag: .checkForUpdates, value: settings.checkForUpdates),
-            row(label: "Appcast URL", control: textField(tag: .updateFeedURL, value: settings.updateFeedURL, secure: false))
+            checkbox(title: "Check for updates automatically", tag: .checkForUpdates, value: settings.checkForUpdates)
         ])
     }
 
@@ -243,7 +241,6 @@ final class SettingsWindowController: NSWindowController {
         case .hardwareDecoding: settings.hardwareDecoding = sender.integerValue == 1
         case .equalizerStart: break
         case .checkForUpdates: settings.checkForUpdates = sender.integerValue == 1
-        case .updateFeedURL: settings.updateFeedURL = sender.stringValue
         case .subtitleSize: settings.subtitleSize = sender.doubleValue
         case .subtitleDelay: settings.subtitleDelay = sender.doubleValue
         case .autoDownloadSubtitles: settings.autoDownloadSubtitles = sender.integerValue == 1

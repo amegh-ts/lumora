@@ -17,12 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         DebugHarness.run { [weak self] urls in self?.activeController().open(urls) }
         #endif
-        Task { @MainActor in
-            let info = await UpdateChecker.shared.checkIfNeeded(settings: SettingsStore.shared)
-            if case .available = info {
-                UpdateChecker.present(info)
-            }
-        }
+        Updater.shared.start(settings: SettingsStore.shared)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -200,10 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func checkForUpdates(_ sender: Any?) {
-        Task { @MainActor in
-            let info = await UpdateChecker.shared.check(settings: SettingsStore.shared, force: true)
-            UpdateChecker.present(info)
-        }
+        Updater.shared.checkForUpdates()
     }
 
     @objc private func showShortcuts(_ sender: Any?) {

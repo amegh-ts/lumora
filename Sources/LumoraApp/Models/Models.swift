@@ -147,9 +147,3 @@ struct ConvertPreset: Identifiable, Hashable {
     var title: String
     var arguments: [String]
 }
-
-enum UpdateInfo {
-    case upToDate
-    case available(version: String, notes: String, download: URL?)
-    case failure(String)
-}

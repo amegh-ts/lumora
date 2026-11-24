@@ -4,19 +4,25 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: macos-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Swift version
         run: swift --version
-      - name: Install libmpv
-        run: brew install mpv
-      - name: Build app
-        run: chmod +x Scripts/build-app.sh && Scripts/build-app.sh
-      - name: Upload app
+      - name: Install build dependencies
+        run: brew install pkg-config meson ninja dav1d libass libplacebo luajit uchardet little-cms2 libbluray zimg
+      - name: Build LGPL FFmpeg, libmpv and fetch Sparkle
+        run: Scripts/build-deps.sh
+      - name: Build app and DMG
+        run: Scripts/make-dmg.sh
+      - name: Upload DMG
         uses: actions/upload-artifact@v4
         with:
-          name: Lumora-app
-          path: dist/Lumora.app
+          name: Lumora-dmg
+          path: dist/*.dmg

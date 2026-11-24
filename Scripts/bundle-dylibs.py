@@ -61,7 +61,7 @@ def main():
         current = queue.pop()
         deps, rpaths = load_commands(current)
         for dep in deps:
-            if dep.startswith(SYSTEM_PREFIXES):
+            if dep.startswith(SYSTEM_PREFIXES) or ".framework/" in dep:
                 continue
             source = resolve(dep, current, rpaths)
             if source is None or source.startswith(SYSTEM_PREFIXES):
