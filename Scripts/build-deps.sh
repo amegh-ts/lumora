@@ -19,7 +19,7 @@ MPV_VERSION="0.42.0"
 MPV_URL="https://github.com/mpv-player/mpv/archive/refs/tags/v${MPV_VERSION}.tar.gz"
 MPV_SHA256="bcfebbfa2b65a6d88dc97ea18117831072373e38b5785a2afb874ed4df5070dd"
 
-HOMEBREW_DEPS=(pkg-config meson ninja dav1d libass libplacebo luajit uchardet little-cms2 libbluray zimg)
+HOMEBREW_DEPS=(pkg-config meson ninja dav1d libass libplacebo luajit uchardet little-cms2 libbluray zimg molten-vk vulkan-loader vulkan-headers)
 
 for tool in meson ninja pkg-config; do
     command -v "$tool" >/dev/null || { echo "error: $tool missing — run: brew install ${HOMEBREW_DEPS[*]}" >&2; exit 1; }
@@ -42,11 +42,18 @@ fetch() {
 fetch "$FFMPEG_URL" "$FFMPEG_SHA256" "ffmpeg-$FFMPEG_VERSION.tar.gz"
 fetch "$MPV_URL" "$MPV_SHA256" "mpv-$MPV_VERSION.tar.gz"
 
-rm -rf "$WORK" "$PREFIX"
+FFMPEG_STAMP="$PREFIX/.ffmpeg-$FFMPEG_VERSION"
+if [[ ! -f "$FFMPEG_STAMP" || "${REBUILD_FFMPEG:-}" == "1" ]]; then
+    rm -rf "$PREFIX"
+fi
+rm -rf "$WORK"
 mkdir -p "$WORK" "$PREFIX"
-tar -xzf "$SRC/ffmpeg-$FFMPEG_VERSION.tar.gz" -C "$WORK"
 tar -xzf "$SRC/mpv-$MPV_VERSION.tar.gz" -C "$WORK"
 
+if [[ -f "$FFMPEG_STAMP" ]]; then
+    echo "==> FFmpeg $FFMPEG_VERSION already built (REBUILD_FFMPEG=1 to force)"
+else
+tar -xzf "$SRC/ffmpeg-$FFMPEG_VERSION.tar.gz" -C "$WORK"
 echo "==> FFmpeg $FFMPEG_VERSION (LGPL)"
 (
     cd "$WORK/FFmpeg-n$FFMPEG_VERSION"
@@ -67,19 +74,14 @@ echo "==> FFmpeg $FFMPEG_VERSION (LGPL)"
     make -j"$JOBS" > "$WORK/ffmpeg-build.log" 2>&1
     make install > /dev/null
 )
+touch "$FFMPEG_STAMP"
+fi
 
 echo "==> mpv $MPV_VERSION (libmpv, -Dgpl=false)"
 (
     cd "$WORK/mpv-$MPV_VERSION"
-    # Upstream only compiles metal_layer.swift and mac_common.swift with Vulkan, but view.swift always needs them.
-    python3 - <<'PATCH'
-import pathlib
-path = pathlib.Path("meson.build")
-text = path.read_text()
-old = "'video/out/mac/window.swift')"
-assert text.count(old) == 1
-path.write_text(text.replace(old, "'video/out/mac/window.swift',\n                           'video/out/mac/metal_layer.swift',\n                           'video/out/mac_common.swift')"))
-PATCH
+    # Let gpu-context=macvk render into Lumora's own view (see the patch for details).
+    python3 "$ROOT/Scripts/patches/mpv-macvk-embed.py" .
     meson setup build \
         --prefix="$PREFIX" \
         --buildtype=release \
@@ -88,7 +90,7 @@ PATCH
         -Dlua=luajit -Djavascript=disabled \
         -Drubberband=disabled -Dvapoursynth=disabled \
         -Dlibarchive=disabled -Dcaca=disabled -Dsixel=disabled -Dsdl2-audio=disabled \
-        -Dvulkan=disabled -Degl=disabled \
+        -Dvulkan=enabled -Degl=disabled \
         -Dswift-build=enabled -Dmacos-cocoa-cb=disabled -Dmacos-media-player=disabled -Dmacos-touchbar=disabled \
         -Dmanpage-build=disabled -Dhtml-build=disabled \
         -Dlibbluray=enabled -Duchardet=enabled -Dlcms2=enabled -Dzimg=enabled \

@@ -182,16 +182,16 @@ final class MPVVideoLayer: CAOpenGLLayer, @unchecked Sendable {
     }
 }
 
-final class VideoView: NSView {
+/// OpenGL fallback surface: drives mpv's render API into a CAOpenGLLayer.
+final class OpenGLVideoView: NSView {
     let videoLayer: MPVVideoLayer
 
-    init(engine: PlaybackEngine) {
+    init(engine: PlaybackEngine, onReady: @escaping @MainActor () -> Void) {
         videoLayer = MPVVideoLayer(mpv: engine.handle)
         super.init(frame: .zero)
-        let box = WeakBox(engine)
         videoLayer.onReady = {
             MainActor.assumeIsolated {
-                box.object?.renderContextReady()
+                onReady()
             }
         }
         wantsLayer = true
@@ -226,5 +226,61 @@ final class VideoView: NSView {
 
     func tearDown() {
         videoLayer.tearDown()
+    }
+}
+
+/// Video surface. With the Metal renderer mpv (vo=gpu-next, macvk) adds its CAMetalLayer to this
+/// view; with OpenGL, or after a Metal failure, an OpenGLVideoView child takes over.
+@MainActor
+final class VideoView: NSView {
+    private let engine: PlaybackEngine
+    private var openGLView: OpenGLVideoView?
+    private var attached = false
+
+    var isUsingOpenGL: Bool { openGLView != nil }
+
+    init(engine: PlaybackEngine) {
+        self.engine = engine
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.black.cgColor
+        if engine.renderer == .openGL {
+            installOpenGL { [weak engine] in engine?.renderContextReady() }
+        }
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil, !attached, engine.renderer == .metal else { return }
+        attached = true
+        engine.attachVideoHost(self)
+    }
+
+    /// Replaces the Metal surface with OpenGL and tells the engine once the GL context exists.
+    func fallBackToOpenGL() {
+        guard openGLView == nil else { return }
+        engine.beginOpenGLFallback()
+        installOpenGL { [weak engine] in engine?.completeOpenGLFallback() }
+    }
+
+    private func installOpenGL(onReady: @escaping @MainActor () -> Void) {
+        let view = OpenGLVideoView(engine: engine, onReady: onReady)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: trailingAnchor),
+            view.topAnchor.constraint(equalTo: topAnchor),
+            view.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+        openGLView = view
+    }
+
+    func tearDown() {
+        openGLView?.tearDown()
     }
 }

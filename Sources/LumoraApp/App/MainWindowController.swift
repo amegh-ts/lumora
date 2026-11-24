@@ -19,7 +19,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let playerViewController: PlayerViewController
 
     init() {
-        engine = PlaybackEngine(ytdlPath: SettingsStore.shared.ytDLPPath, hardwareDecoding: SettingsStore.shared.hardwareDecoding)
+        engine = PlaybackEngine(
+            ytdlPath: SettingsStore.shared.ytDLPPath,
+            hardwareDecoding: SettingsStore.shared.hardwareDecoding,
+            renderer: SettingsStore.shared.renderer
+        )
         playerViewController = PlayerViewController(
             engine: engine,
             playlist: playlist,

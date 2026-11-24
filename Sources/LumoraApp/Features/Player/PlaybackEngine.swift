@@ -37,6 +37,10 @@ final class PlaybackEngine: ObservableObject {
     private var isShutDown = false
     private var isPaused = false
     private var isRenderReady = false
+    private(set) var renderer: VideoRenderer
+    private var voConfigured = false
+    private var pendingOpenGLSwitch = false
+    var onRendererFailure: (() -> Void)?
     private var pendingLoad: [String]?
     private var isAtEnd = false
     private var nextReplyID: UInt64 = 100
@@ -50,7 +54,11 @@ final class PlaybackEngine: ObservableObject {
         #endif
     }
 
-    init(ytdlPath: String, hardwareDecoding: Bool) {
+    init(ytdlPath: String, hardwareDecoding: Bool, renderer: VideoRenderer) {
+        self.renderer = renderer
+        if renderer == .metal {
+            Self.configureVulkanDriver()
+        }
         guard let created = mpv_create() else {
             fatalError("libmpv could not be initialised")
         }
@@ -61,7 +69,6 @@ final class PlaybackEngine: ObservableObject {
             ("config", "no"),
             ("terminal", Self.mpvLogging ? "yes" : "no"),
             ("msg-level", "all=warn"),
-            ("vo", "libmpv"),
             ("hwdec", hardwareDecoding ? "auto-safe" : "no"),
             ("keep-open", "yes"),
             ("idle", "yes"),
@@ -87,7 +94,21 @@ final class PlaybackEngine: ObservableObject {
             ("hr-seek-framedrop", "yes"),
             ("interpolation", "no")
         ]
-        for (name, value) in options {
+        let videoOptions: [(String, String)]
+        switch renderer {
+        case .metal:
+            videoOptions = [
+                ("vo", "gpu-next"),
+                ("gpu-api", "vulkan"),
+                ("gpu-context", "macvk"),
+                ("target-colorspace-hint", "auto"),
+                ("cursor-autohide", "no"),
+                ("force-window", "no")
+            ]
+        case .openGL:
+            videoOptions = [("vo", "libmpv")]
+        }
+        for (name, value) in options + videoOptions {
             MPV.setOption(handle, name, value)
         }
         let status = mpv_initialize(handle)
@@ -111,6 +132,7 @@ final class PlaybackEngine: ObservableObject {
         observe("dwidth", MPV_FORMAT_INT64)
         observe("dheight", MPV_FORMAT_INT64)
         observe("video-rotate", MPV_FORMAT_INT64)
+        observe("vo-configured", MPV_FORMAT_FLAG)
 
         let context = Unmanaged.passRetained(wakeupBox).toOpaque()
         mpv_set_wakeup_callback(handle, mpvWakeup, context)
@@ -120,12 +142,73 @@ final class PlaybackEngine: ObservableObject {
         shutdown()
     }
 
+    /// Number of engines still tearing down in the background; the app waits for zero before quitting.
+    static private(set) var pendingShutdowns = 0
+
     func shutdown() {
         guard !isShutDown else { return }
         isShutDown = true
+        Self.pendingShutdowns += 1
         mpv_set_wakeup_callback(handle, nil, nil)
-        mpv_terminate_destroy(handle)
-        Unmanaged.passUnretained(wakeupBox).release()
+        let address = UInt(bitPattern: handle)
+        let box = Unmanaged.passUnretained(wakeupBox)
+        let release = UInt(bitPattern: box.toOpaque())
+        // Tearing down the Metal output hops to the main thread, so never block it here.
+        DispatchQueue.global(qos: .userInitiated).async {
+            if let handle = OpaquePointer(bitPattern: address) {
+                mpv_terminate_destroy(handle)
+            }
+            if let pointer = UnsafeRawPointer(bitPattern: release) {
+                Unmanaged<WeakBox<PlaybackEngine>>.fromOpaque(pointer).release()
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    PlaybackEngine.pendingShutdowns -= 1
+                    if PlaybackEngine.pendingShutdowns == 0 {
+                        NotificationCenter.default.post(name: .lumoraEnginesStopped, object: nil)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Metal: hand mpv the view it should render into. Must happen before the first file loads.
+    func attachVideoHost(_ view: NSView) {
+        guard renderer == .metal else { return }
+        let address = Int(bitPattern: Unmanaged.passUnretained(view).toOpaque())
+        MPV.setProperty(handle, "wid", String(address))
+        renderContextReady()
+    }
+
+    /// Called after the OpenGL layer created its render context following a Metal failure.
+    func completeOpenGLFallback() {
+        guard pendingOpenGLSwitch else { return }
+        pendingOpenGLSwitch = false
+        renderer = .openGL
+        MPV.setProperty(handle, "vo", "libmpv")
+        // vid is still "auto" after the failed output, so name the track explicitly to restart video.
+        if let track = videoTracks.first {
+            MPV.setProperty(handle, "vid", String(track.id))
+        }
+    }
+
+    func beginOpenGLFallback() {
+        guard renderer == .metal, !pendingOpenGLSwitch else { return }
+        pendingOpenGLSwitch = true
+    }
+
+    private static func configureVulkanDriver() {
+        guard getenv("VK_DRIVER_FILES") == nil, getenv("VK_ICD_FILENAMES") == nil else { return }
+        var candidates: [String] = []
+        if let resources = Bundle.main.resourceURL {
+            candidates.append(resources.appendingPathComponent("vulkan/icd.d/MoltenVK_icd.json").path)
+        }
+        #if DEBUG
+        candidates.append("/opt/homebrew/opt/molten-vk/etc/vulkan/icd.d/MoltenVK_icd.json")
+        #endif
+        if let path = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) {
+            setenv("VK_DRIVER_FILES", path, 1)
+        }
     }
 
     func load(_ item: PlaybackItem, resumeTime: TimeInterval = 0) {
@@ -359,6 +442,7 @@ final class PlaybackEngine: ObservableObject {
             let property = data.assumingMemoryBound(to: mpv_event_property.self).pointee
             handle(property: property)
         case MPV_EVENT_FILE_LOADED:
+            scheduleRendererCheck()
             statusMessage = ""
             isAtEnd = false
             isPlaying = hasMedia && !isPaused
@@ -440,10 +524,23 @@ final class PlaybackEngine: ObservableObject {
         case "dheight":
             let height = hasValue ? property.data.assumingMemoryBound(to: Int64.self).pointee : 0
             videoSize.height = CGFloat(height)
+        case "vo-configured":
+            voConfigured = hasValue && property.data.assumingMemoryBound(to: Int32.self).pointee != 0
         case "video-rotate":
             rotation = hasValue ? Int(property.data.assumingMemoryBound(to: Int64.self).pointee) : 0
         default:
             break
+        }
+    }
+
+    private func scheduleRendererCheck() {
+        guard renderer == .metal else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard let self, self.renderer == .metal, self.hasMedia, !self.isShutDown else { return }
+            // A failed video output makes mpv deselect the video track, so check for any video track.
+            if !self.videoTracks.isEmpty, !self.voConfigured {
+                self.onRendererFailure?()
+            }
         }
     }
 

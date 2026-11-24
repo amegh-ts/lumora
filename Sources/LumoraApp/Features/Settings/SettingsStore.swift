@@ -7,6 +7,18 @@ enum VideoGravityPreference: String, Codable, CaseIterable {
     case stretch
 }
 
+enum VideoRenderer: String, Codable, CaseIterable {
+    case metal
+    case openGL = "opengl"
+
+    var title: String {
+        switch self {
+        case .metal: return "Metal (gpu-next, HDR)"
+        case .openGL: return "OpenGL (compatibility)"
+        }
+    }
+}
+
 @MainActor
 final class SettingsStore: ObservableObject {
     static let shared = SettingsStore()
@@ -18,6 +30,7 @@ final class SettingsStore: ObservableObject {
     @Published var shuffle = false { didSet { persist() } }
     @Published var videoGravity: VideoGravityPreference = .aspect { didSet { persist() } }
     @Published var subtitleSize: Double = 24 { didSet { persist() } }
+    @Published var renderer: VideoRenderer = .metal { didSet { persist() } }
     @Published var subtitleDelay: TimeInterval = 0 { didSet { persist() } }
     @Published var autoDownloadSubtitles = false { didSet { persist() } }
     @Published var subtitleLanguages: String = "en" { didSet { persist() } }
@@ -53,6 +66,7 @@ final class SettingsStore: ObservableObject {
         var brightness: Double = 0
         var contrast: Double = 1
         var saturation: Double = 1
+        var renderer: VideoRenderer?
     }
 
     private init() {
@@ -83,6 +97,7 @@ final class SettingsStore: ObservableObject {
         brightness = snapshot.brightness
         contrast = snapshot.contrast
         saturation = snapshot.saturation
+        renderer = snapshot.renderer ?? .metal
     }
 
     func save() {
@@ -110,7 +125,8 @@ final class SettingsStore: ObservableObject {
             equalizerGains: equalizerGains,
             brightness: brightness,
             contrast: contrast,
-            saturation: saturation
+            saturation: saturation,
+            renderer: renderer
         )
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         AppPaths.ensureDirectories()

@@ -239,6 +239,11 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             self.refreshEmptyState()
             self.osd.show("Can't play this file", symbol: "exclamationmark.triangle.fill", duration: 2.5)
         }
+        engine.onRendererFailure = { [weak self] in
+            guard let self else { return }
+            self.videoView.fallBackToOpenGL()
+            self.osd.show("Metal unavailable — using OpenGL", symbol: "exclamationmark.triangle.fill", duration: 2.5)
+        }
         engine.onScreenshot = { [weak self] url in
             guard let self else { return }
             if let url {
