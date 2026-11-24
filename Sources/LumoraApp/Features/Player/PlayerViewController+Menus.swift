@@ -9,6 +9,7 @@ enum DynamicMenu {
     case bookmarks
     case videoSize
     case repeatMode
+    case streamQuality
 }
 
 extension PlayerViewController {
@@ -66,6 +67,25 @@ extension PlayerViewController {
             for bookmark in bookmarks {
                 menu.addItem(ClosureMenuItem(bookmark.label) { [weak self] in self?.engine.seek(to: bookmark.time) })
             }
+        case .streamQuality:
+            let choices = StreamVariant.menuChoices(from: engine.streamVariants)
+            if choices.isEmpty {
+                let note = engine.currentItem?.url.isFileURL == false ? "Single Quality Stream" : "Online Videos Only"
+                menu.addItem(ClosureMenuItem(note, enabled: false) {})
+            }
+            for variant in choices {
+                let title = variant.detail.isEmpty ? variant.label : "\(variant.label)\t\(variant.detail)"
+                menu.addItem(
+                    ClosureMenuItem(title, checked: variant.isSelected) { [weak self] in
+                        self?.engine.selectStreamVariant(variant.id)
+                        self?.osd.show("Quality: \(variant.label)", symbol: "sparkles.tv")
+                    })
+            }
+            menu.addItem(.separator())
+            menu.addItem(
+                ClosureMenuItem("Default for New Videos…") {
+                    (NSApp.delegate as? AppDelegate)?.showVideoSettings(nil)
+                })
         case .videoSize:
             let options: [(VideoGravityPreference, String)] = [(.aspect, "Fit"), (.fill, "Fill (Crop Edges)"), (.stretch, "Stretch")]
             for (preference, title) in options {

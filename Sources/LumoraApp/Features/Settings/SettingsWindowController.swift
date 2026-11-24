@@ -207,6 +207,18 @@ enum SettingsPanes {
                         control: Form.toggle({ settings.hardwareDecoding }, { settings.hardwareDecoding = $0 }))
                 ]
             ),
+            Form.section(
+                "Online Videos",
+                footnote:
+                    "Applies to YouTube and other sites opened with Open URL. Auto picks the highest quality your display can show (\(StreamQuality.displayHeight)p here), which loads faster and buffers less than 4K on a smaller screen. Change it for the current video from Video › Quality.",
+                rows: [
+                    Form.row(
+                        "Starting quality",
+                        control: Form.popup(
+                            StreamQuality.allCases.map { ($0.title, $0) },
+                            { settings.streamQuality }, { settings.streamQuality = $0 }))
+                ]
+            ),
             picture,
             Form.hStack([NSView(), reset])
         ]

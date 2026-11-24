@@ -31,6 +31,7 @@ final class SettingsStore: ObservableObject {
     @Published var videoGravity: VideoGravityPreference = .aspect { didSet { persist() } }
     @Published var subtitleSize: Double = 24 { didSet { persist() } }
     @Published var renderer: VideoRenderer = .metal { didSet { persist() } }
+    @Published var streamQuality: StreamQuality = .auto { didSet { persist() } }
     @Published var subtitleDelay: TimeInterval = 0 { didSet { persist() } }
     @Published var autoDownloadSubtitles = false { didSet { persist() } }
     @Published var subtitleLanguages: String = "en" { didSet { persist() } }
@@ -74,6 +75,7 @@ final class SettingsStore: ObservableObject {
         var contrast: Double = 1
         var saturation: Double = 1
         var renderer: VideoRenderer?
+        var streamQuality: StreamQuality = .auto
 
         init() {}
 
@@ -104,6 +106,7 @@ final class SettingsStore: ObservableObject {
             contrast = value(.contrast, d.contrast)
             saturation = value(.saturation, d.saturation)
             renderer = value(.renderer, d.renderer)
+            streamQuality = value(.streamQuality, d.streamQuality)
         }
     }
 
@@ -139,6 +142,7 @@ final class SettingsStore: ObservableObject {
         contrast = defaults.contrast
         saturation = defaults.saturation
         renderer = .metal
+        streamQuality = defaults.streamQuality
         isLoading = false
         persist()
     }
@@ -177,6 +181,7 @@ final class SettingsStore: ObservableObject {
         contrast = snapshot.contrast
         saturation = snapshot.saturation
         renderer = snapshot.renderer ?? .metal
+        streamQuality = snapshot.streamQuality
     }
 
     func save() {
@@ -223,6 +228,7 @@ final class SettingsStore: ObservableObject {
         snapshot.contrast = contrast
         snapshot.saturation = saturation
         snapshot.renderer = renderer
+        snapshot.streamQuality = streamQuality
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         AppPaths.ensureDirectories()
         try? data.write(to: AppPaths.settingsFile, options: .atomic)

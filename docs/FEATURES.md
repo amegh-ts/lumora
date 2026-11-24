@@ -9,6 +9,7 @@
 - Per-file audio delay and subtitle delay.
 - 10-band equalizer with presets; brightness, contrast, saturation; fit / fill / stretch; rotate.
 - Network streams: HTTP(S), HLS, RTSP and more; YouTube and similar sites through yt-dlp.
+- Stream quality: pick any resolution an online video offers (Video › Quality) without reloading; the default matches your display. Streams download in chunks and keep two minutes buffered, so ±10 s jumps don't stall.
 
 ## Subtitles
 - Full ASS/SSA styling, SRT, VTT, PGS, VobSub.

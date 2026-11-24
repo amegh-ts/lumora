@@ -379,6 +379,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
             }
             .store(in: &cancellables)
+        settings.$streamQuality.removeDuplicates().dropFirst()
+            .sink { [weak self] in self?.engine.setStreamHeightCap($0.maxHeight) }
+            .store(in: &cancellables)
         settings.$shuffle.removeDuplicates().dropFirst()
             .sink { [weak self] in self?.playlist.shuffle = $0 }
             .store(in: &cancellables)
@@ -748,6 +751,16 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
     private func moreMenu() -> NSMenu {
         let menu = NSMenu()
+        if !engine.streamVariants.isEmpty {
+            let current = engine.streamVariants.first(where: \.isSelected)?.label
+            let parent = NSMenuItem(title: current.map { "Quality: \($0)" } ?? "Quality", action: nil, keyEquivalent: "")
+            parent.image = NSImage(systemSymbolName: "sparkles.tv", accessibilityDescription: nil)
+            let submenu = NSMenu()
+            fill(.streamQuality, into: submenu)
+            parent.submenu = submenu
+            menu.addItem(parent)
+            menu.addItem(.separator())
+        }
         menu.addItem(ClosureMenuItem("Take Screenshot") { [weak self] in self?.takeScreenshot(nil) })
         menu.addItem(ClosureMenuItem("Add Bookmark") { [weak self] in self?.addBookmark() })
         if let item = engine.currentItem, let bookmarks = library.record(for: item.url)?.bookmarks, !bookmarks.isEmpty {

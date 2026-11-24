@@ -1,5 +1,17 @@
 import Foundation
 
+/// Timestamped event log for stream timing tests (DEBUG only, LUMORA_TIMELINE=1).
+enum DebugTimeline {
+    nonisolated(unsafe) static let start = Date()
+    static func log(_ event: String) {
+        #if DEBUG
+            guard ProcessInfo.processInfo.environment["LUMORA_TIMELINE"] != nil else { return }
+            print(String(format: "[time %6.2fs] ", Date().timeIntervalSince(start)) + event)
+            fflush(stdout)
+        #endif
+    }
+}
+
 /// Test-only switches. Always false in release builds.
 enum DebugMode {
     /// LUMORA_BACKGROUND=1: never activate or bring windows forward, keep rendering while covered.
@@ -25,11 +37,36 @@ enum DebugMode {
                 return
             }
             if let path = environment["LUMORA_OPEN"] {
-                open([URL(fileURLWithPath: path)])
+                open([path.hasPrefix("http") ? URL(string: path)! : URL(fileURLWithPath: path)])
                 if environment["LUMORA_MUTE"] != nil,
                     let player = NSApp.windows.compactMap({ $0.contentViewController as? PlayerViewController }).first
                 {
                     player.engine.toggleMute()
+                }
+            }
+            // LUMORA_SKIPS="8:10,12:-10" → at 8 s skip +10 s, at 12 s skip -10 s.
+            for entry in (environment["LUMORA_SKIPS"] ?? "").split(separator: ",") {
+                let parts = entry.split(separator: ":").compactMap { Double($0) }
+                guard parts.count == 2 else { continue }
+                DispatchQueue.main.asyncAfter(deadline: .now() + parts[0]) {
+                    guard let player = NSApp.windows.compactMap({ $0.contentViewController as? PlayerViewController }).first else { return }
+                    DebugTimeline.log("skip \(parts[1]) at t=\(String(format: "%.1f", player.engine.currentTime))")
+                    player.engine.skip(parts[1])
+                }
+            }
+            // LUMORA_QUALITY="15:720" → at 15 s list the stream variants and switch to 720p.
+            if let entry = environment["LUMORA_QUALITY"] {
+                let parts = entry.split(separator: ":").compactMap { Double($0) }
+                if parts.count == 2 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + parts[0]) {
+                        guard let player = NSApp.windows.compactMap({ $0.contentViewController as? PlayerViewController }).first else { return }
+                        let choices = StreamVariant.menuChoices(from: player.engine.streamVariants)
+                        DebugTimeline.log("variants " + choices.map { "\($0.label)[\($0.detail)]\($0.isSelected ? "*" : "")" }.joined(separator: " "))
+                        if let target = choices.first(where: { $0.height == Int(parts[1]) }) {
+                            DebugTimeline.log("select \(target.label) at t=\(String(format: "%.1f", player.engine.currentTime))")
+                            player.engine.selectStreamVariant(target.id)
+                        }
+                    }
                 }
             }
             if let minimizeAt = environment["LUMORA_MINIMIZE_AT"].flatMap(Double.init) {

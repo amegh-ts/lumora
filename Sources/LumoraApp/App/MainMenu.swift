@@ -215,6 +215,7 @@ enum MainMenuBuilder {
         add(video, "Take Screenshot", #selector(PlayerViewController.takeScreenshot(_:)), "s", [.command, .shift], symbol: "camera")
         video.addItem(.separator())
         dynamic(video, "Video Size", .videoSize, symbol: "aspectratio")
+        dynamic(video, "Quality", .streamQuality, symbol: "sparkles.tv")
         add(video, "Rotate 90°", #selector(PlayerViewController.rotateVideo(_:)), "r", [.command, .option], symbol: "rotate.right")
         video.addItem(.separator())
         add(video, "Video Settings…", #selector(AppDelegate.showVideoSettings(_:)), symbol: "slider.horizontal.3")

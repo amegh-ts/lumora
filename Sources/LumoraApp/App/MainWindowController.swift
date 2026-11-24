@@ -33,7 +33,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         engine = PlaybackEngine(
             ytdlPath: SettingsStore.shared.ytDLPPath,
             hardwareDecoding: SettingsStore.shared.hardwareDecoding,
-            renderer: Self.debugRenderer ?? SettingsStore.shared.renderer
+            renderer: Self.debugRenderer ?? SettingsStore.shared.renderer,
+            streamHeightCap: SettingsStore.shared.streamQuality.maxHeight
         )
         playerViewController = PlayerViewController(
             engine: engine,

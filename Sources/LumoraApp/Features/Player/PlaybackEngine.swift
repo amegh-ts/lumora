@@ -22,6 +22,8 @@ final class PlaybackEngine: ObservableObject {
     @Published private(set) var loopB: TimeInterval?
     @Published private(set) var videoSize: CGSize = .zero
     @Published private(set) var rotation = 0
+    /// Renditions of an online video (YouTube formats, HLS variants); empty for local files.
+    @Published private(set) var streamVariants: [StreamVariant] = []
 
     var selectedAudioTrackID: Int? { audioTracks.first { $0.isSelected }?.id }
     var selectedSubtitleTrackID: Int? { subtitleTracks.first { $0.isSelected }?.id }
@@ -57,8 +59,13 @@ final class PlaybackEngine: ObservableObject {
         #endif
     }
 
-    init(ytdlPath: String, hardwareDecoding: Bool, renderer: VideoRenderer) {
+    /// Height cap used when yt-dlp picks the starting format; nil means best available.
+    private(set) var streamHeightCap: Int?
+    private var currentEdition = -1
+
+    init(ytdlPath: String, hardwareDecoding: Bool, renderer: VideoRenderer, streamHeightCap: Int? = 1080) {
         self.renderer = renderer
+        self.streamHeightCap = streamHeightCap
         if renderer == .metal {
             Self.configureVulkanDriver()
         }
@@ -86,8 +93,16 @@ final class PlaybackEngine: ObservableObject {
             ("screenshot-format", "png"),
             ("screenshot-directory", AppPaths.screenshots.path),
             ("ytdl", "yes"),
-            ("ytdl-format", "bestvideo[height<=?2160]+bestaudio/best"),
-            ("script-opts", "ytdl_hook-ytdl_path=\(Self.safeToolPath(ytdlPath, fallback: "yt-dlp"))"),
+            ("ytdl-format", StreamQuality.ytdlFormat(maxHeight: streamHeightCap)),
+            // Web pages go straight to yt-dlp instead of failing an ffmpeg probe first; direct
+            // media links opt out per file in load().
+            (
+                "script-opts",
+                "ytdl_hook-ytdl_path=\(Self.safeToolPath(ytdlPath, fallback: "yt-dlp")),ytdl_hook-try_ytdl_first=yes"
+            ),
+            // One long HTTP download gets throttled by YouTube and many CDNs (~700 KB/s here);
+            // 10 MiB range requests on one kept-alive connection, as yt-dlp does, run at full speed.
+            ("stream-lavf-o", "request_size=10485760,multiple_requests=1"),
             ("load-scripts", "no"),
             ("load-stats-overlay", "no"),
             ("load-console", "no"),
@@ -158,6 +173,8 @@ final class PlaybackEngine: ObservableObject {
         observe("dheight", MPV_FORMAT_INT64)
         observe("video-rotate", MPV_FORMAT_INT64)
         observe("vo-configured", MPV_FORMAT_FLAG)
+        observe("edition-list", MPV_FORMAT_NODE)
+        observe("current-edition", MPV_FORMAT_INT64)
 
         mpv_request_log_messages(handle, "error")
         let context = Unmanaged.passRetained(wakeupBox).toOpaque()
@@ -261,17 +278,30 @@ final class PlaybackEngine: ObservableObject {
         chapters = []
         isAtEnd = false
         hasMedia = true
-        statusMessage = "Opening \(item.title)…"
+        streamVariants = []
         let target = item.url.isFileURL ? item.url.path : item.url.absoluteString
-        // Local files read ahead from disk on demand; only streams need a large packet buffer.
-        var fileOptions =
-            item.url.isFileURL
-            ? ["demuxer-max-bytes=32MiB", "demuxer-max-back-bytes=8MiB"]
-            : ["demuxer-max-bytes=96MiB", "demuxer-max-back-bytes=32MiB"]
+        // Local files read ahead from disk on demand. Streams keep a large window both ways so
+        // ±10 s jumps land inside data that is already downloaded.
+        var fileOptions: [String]
+        if item.url.isFileURL {
+            statusMessage = "Opening \(item.title)…"
+            fileOptions = ["demuxer-max-bytes=32MiB", "demuxer-max-back-bytes=8MiB"]
+        } else {
+            let isDirectMedia = Self.isDirectMediaURL(item.url)
+            statusMessage = isDirectMedia ? "Connecting…" : "Fetching video from \(item.url.host ?? "the web")…"
+            fileOptions = [
+                "cache=yes", "cache-secs=120", "demuxer-max-bytes=128MiB", "demuxer-max-back-bytes=48MiB",
+                "demuxer-seekable-cache=yes"
+            ]
+            if isDirectMedia {
+                fileOptions.append("ytdl=no")
+            }
+        }
         if resumeTime > 1 {
             fileOptions.append("start=\(resumeTime)")
         }
         let args = ["loadfile", target, "replace", "-1", fileOptions.joined(separator: ",")]
+        DebugTimeline.log("load \(item.url.isFileURL ? "file" : "url")")
         resetPerFileState()
         subtitleDelay = defaultSubtitleDelay
         setProperty("sub-delay", String(subtitleDelay))
@@ -298,6 +328,34 @@ final class PlaybackEngine: ObservableObject {
         setProperty("ab-loop-a", "no")
         setProperty("ab-loop-b", "no")
         setProperty("video-rotate", "0")
+        setProperty("edition", "auto")
+    }
+
+    private static let directMediaExtensions: Set<String> = [
+        "mp4", "m4v", "mkv", "webm", "mov", "avi", "flv", "ts", "m2ts", "mts", "m3u8", "m3u", "mpd",
+        "mp3", "m4a", "aac", "flac", "ogg", "oga", "opus", "wav", "wma", "wmv", "mpg", "mpeg", "3gp"
+    ]
+
+    /// A link straight to a media file or playlist needs no yt-dlp lookup.
+    static func isDirectMediaURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return true }
+        return directMediaExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    /// Switches the current stream to another rendition in place; playback keeps its position.
+    func selectStreamVariant(_ id: Int) {
+        guard streamVariants.contains(where: { $0.id == id }) else { return }
+        if let variant = streamVariants.first(where: { $0.id == id }), variant.height > 0 {
+            streamHeightCap = variant.height
+            setProperty("ytdl-format", StreamQuality.ytdlFormat(maxHeight: variant.height))
+        }
+        setProperty("edition", String(id))
+    }
+
+    /// Default quality for online videos opened from now on.
+    func setStreamHeightCap(_ height: Int?) {
+        streamHeightCap = height
+        setProperty("ytdl-format", StreamQuality.ytdlFormat(maxHeight: height))
     }
 
     func renderContextReady() {
@@ -578,6 +636,7 @@ final class PlaybackEngine: ObservableObject {
             let property = data.assumingMemoryBound(to: mpv_event_property.self).pointee
             handle(property: property)
         case MPV_EVENT_FILE_LOADED:
+            DebugTimeline.log("file loaded")
             Self.releaseFreeMemory(after: 3)
             statusMessage = ""
             isAtEnd = false
@@ -640,6 +699,7 @@ final class PlaybackEngine: ObservableObject {
             }
         case "paused-for-cache":
             isBuffering = hasValue && property.data.assumingMemoryBound(to: Int32.self).pointee != 0
+            DebugTimeline.log(isBuffering ? "buffering start" : "buffering end")
         case "track-list":
             guard hasValue else { return }
             let node = property.data.assumingMemoryBound(to: mpv_node.self).pointee
@@ -667,8 +727,27 @@ final class PlaybackEngine: ObservableObject {
             videoSize.height = CGFloat(height)
         case "vo-configured":
             voConfigured = hasValue && property.data.assumingMemoryBound(to: Int32.self).pointee != 0
+            if voConfigured { DebugTimeline.log("video output ready (first frame)") }
         case "video-rotate":
             rotation = hasValue ? Int(property.data.assumingMemoryBound(to: Int64.self).pointee) : 0
+        case "edition-list":
+            guard hasValue, currentItem.map({ !$0.url.isFileURL }) == true else {
+                streamVariants = []
+                return
+            }
+            let node = property.data.assumingMemoryBound(to: mpv_node.self).pointee
+            let list = MPV.value(from: node) as? [Any] ?? []
+            streamVariants = list.compactMap { entry in
+                guard let map = entry as? [String: Any], let id = map.int("id"), let title = map.string("title") else { return nil }
+                return StreamVariant(id: id, title: title, isSelected: id == currentEdition)
+            }
+        case "current-edition":
+            currentEdition = hasValue ? Int(property.data.assumingMemoryBound(to: Int64.self).pointee) : -1
+            streamVariants = streamVariants.map { variant in
+                var copy = variant
+                copy.isSelected = variant.id == currentEdition
+                return copy
+            }
         default:
             break
         }
