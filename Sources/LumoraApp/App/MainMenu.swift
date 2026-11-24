@@ -6,8 +6,9 @@ final class GuardedMainMenu: NSMenu {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.intersection([.command, .control]).isEmpty {
             guard let window = NSApp.keyWindow,
-                  window.windowController is MainWindowController,
-                  !(window.firstResponder is NSText) else { return false }
+                window.windowController is MainWindowController,
+                !(window.firstResponder is NSText)
+            else { return false }
         }
         return super.performKeyEquivalent(with: event)
     }

@@ -16,7 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.activate(ignoringOtherApps: true)
         #if DEBUG
-        DebugHarness.run { [weak self] urls in self?.activeController().open(urls) }
+            DebugHarness.run { [weak self] urls in self?.activeController().open(urls) }
         #endif
         Updater.shared.start(settings: SettingsStore.shared)
     }
@@ -34,7 +34,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         #if DEBUG
-        FileHandle.standardError.write("[debug] open urls=\(urls.map(\.lastPathComponent)) controllers=\(controllers.count) key=\(NSApp.keyWindow != nil)\n".data(using: .utf8)!)
+            FileHandle.standardError.write(
+                "[debug] open urls=\(urls.map(\.lastPathComponent)) controllers=\(controllers.count) key=\(NSApp.keyWindow != nil)\n".data(using: .utf8)!)
         #endif
         activeController().open(urls)
         NSApp.activate(ignoringOtherApps: true)
@@ -72,11 +73,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         #if DEBUG
-        FileHandle.standardError.write("[debug] new player window (total \(controllers.count + 1))\n".data(using: .utf8)!)
+            FileHandle.standardError.write("[debug] new player window (total \(controllers.count + 1))\n".data(using: .utf8)!)
         #endif
         controller.onClose = { [weak self] closed in
             #if DEBUG
-            FileHandle.standardError.write("[debug] player window closed\n".data(using: .utf8)!)
+                FileHandle.standardError.write("[debug] player window closed\n".data(using: .utf8)!)
             #endif
             self?.controllers.removeAll { $0 === closed }
         }
@@ -184,20 +185,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.messageText = "Keyboard Shortcuts"
         alert.informativeText = """
-        Space or K — play / pause
-        ← / → — seek 10 s  (⇧ 3 s, ⌥ 60 s)
-        ↑ / ↓ — volume
-        F or double-click — full screen;  Esc — exit
-        [ / ] — slower / faster;  = — normal speed
-        , / . — previous / next frame
-        L — A-B loop;  B — bookmark
-        A — next audio track;  T — next subtitle
-        Z / X — subtitles earlier / later
-        M — mute;  S — screenshot;  P — playlist
-        ⌘← / ⌘→ — previous / next item
-        ⌥⌘M — mini player;  ⌥⌘T — keep on top
-        Scroll — volume (vertical), seek (horizontal)
-        """
+            Space or K — play / pause
+            ← / → — seek 10 s  (⇧ 3 s, ⌥ 60 s)
+            ↑ / ↓ — volume
+            F or double-click — full screen;  Esc — exit
+            [ / ] — slower / faster;  = — normal speed
+            , / . — previous / next frame
+            L — A-B loop;  B — bookmark
+            A — next audio track;  T — next subtitle
+            Z / X — subtitles earlier / later
+            M — mute;  S — screenshot;  P — playlist
+            ⌘← / ⌘→ — previous / next item
+            ⌥⌘M — mini player;  ⌥⌘T — keep on top
+            Scroll — volume (vertical), seek (horizontal)
+            """
         alert.addButton(withTitle: "OK")
         alert.runModal()
     }

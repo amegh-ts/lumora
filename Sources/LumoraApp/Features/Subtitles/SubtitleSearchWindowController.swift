@@ -91,7 +91,8 @@ private final class SubtitleSearchViewController: NSViewController, NSTableViewD
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let identifier = tableColumn?.identifier ?? NSUserInterfaceItemIdentifier("title")
-        let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView
+        let cell =
+            tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView
             ?? makeCell(identifier: identifier)
         let result = results[row]
         switch identifier.rawValue {
@@ -151,11 +152,13 @@ private final class SubtitleSearchViewController: NSViewController, NSTableViewD
                 statusField.stringValue = "Download failed."
                 return
             }
-            guard let track = SubtitleService.saveDownloaded(
-                data,
-                language: result.language,
-                filename: result.title
-            ) else {
+            guard
+                let track = SubtitleService.saveDownloaded(
+                    data,
+                    language: result.language,
+                    filename: result.title
+                )
+            else {
                 statusField.stringValue = "Could not save subtitle."
                 return
             }

@@ -111,28 +111,46 @@ enum SettingsPanes {
         let version = info["CFBundleShortVersionString"] as? String ?? "dev"
         let build = info["CFBundleVersion"] as? String ?? "-"
         return [
-            Form.section("Playback", rows: [
-                Form.row("Resume where you left off", control: Form.toggle(
-                    { settings.rememberLastPosition }, { settings.rememberLastPosition = $0 })),
-                Form.row("Play next item automatically", control: Form.toggle(
-                    { settings.autoplayNext }, { settings.autoplayNext = $0 })),
-                Form.row("Repeat", control: Form.popup(
-                    [("Off", RepeatMode.off), ("All items", .all), ("Current item", .one)],
-                    { settings.repeatMode }, { settings.repeatMode = $0 })),
-                Form.row("Shuffle", control: Form.toggle({ settings.shuffle }, { settings.shuffle = $0 }))
-            ]),
-            Form.section("Window", rows: [
-                Form.row("Video size", detail: "How video fills the window when its shape differs.", control: Form.popup(
-                    [("Fit", VideoGravityPreference.aspect), ("Fill (crop edges)", .fill), ("Stretch", .stretch)],
-                    { settings.videoGravity }, { settings.videoGravity = $0 }))
-            ]),
-            Form.section("Updates", rows: [
-                Form.row("Check for updates automatically", control: Form.toggle(
-                    { settings.checkForUpdates }, { settings.checkForUpdates = $0 })),
-                Form.row("Lumora \(version) (build \(build))", control: Form.button("Check Now") {
-                    Updater.shared.checkForUpdates()
-                })
-            ])
+            Form.section(
+                "Playback",
+                rows: [
+                    Form.row(
+                        "Resume where you left off",
+                        control: Form.toggle(
+                            { settings.rememberLastPosition }, { settings.rememberLastPosition = $0 })),
+                    Form.row(
+                        "Play next item automatically",
+                        control: Form.toggle(
+                            { settings.autoplayNext }, { settings.autoplayNext = $0 })),
+                    Form.row(
+                        "Repeat",
+                        control: Form.popup(
+                            [("Off", RepeatMode.off), ("All items", .all), ("Current item", .one)],
+                            { settings.repeatMode }, { settings.repeatMode = $0 })),
+                    Form.row("Shuffle", control: Form.toggle({ settings.shuffle }, { settings.shuffle = $0 }))
+                ]),
+            Form.section(
+                "Window",
+                rows: [
+                    Form.row(
+                        "Video size", detail: "How video fills the window when its shape differs.",
+                        control: Form.popup(
+                            [("Fit", VideoGravityPreference.aspect), ("Fill (crop edges)", .fill), ("Stretch", .stretch)],
+                            { settings.videoGravity }, { settings.videoGravity = $0 }))
+                ]),
+            Form.section(
+                "Updates",
+                rows: [
+                    Form.row(
+                        "Check for updates automatically",
+                        control: Form.toggle(
+                            { settings.checkForUpdates }, { settings.checkForUpdates = $0 })),
+                    Form.row(
+                        "Lumora \(version) (build \(build))",
+                        control: Form.button("Check Now") {
+                            Updater.shared.checkForUpdates()
+                        })
+                ])
         ]
     }
 
@@ -149,12 +167,21 @@ enum SettingsPanes {
             "Picture",
             footnote: "Applies immediately to every open player window.",
             rows: [
-                Form.row("Brightness", control: Form.slider(range: -1...1, step: 0.01, format: percent,
-                    { settings.brightness }, { settings.brightness = $0 })),
-                Form.row("Contrast", control: Form.slider(range: 0...2, step: 0.01, format: relative,
-                    { settings.contrast }, { settings.contrast = $0 })),
-                Form.row("Saturation", control: Form.slider(range: 0...2, step: 0.01, format: relative,
-                    { settings.saturation }, { settings.saturation = $0 }))
+                Form.row(
+                    "Brightness",
+                    control: Form.slider(
+                        range: -1...1, step: 0.01, format: percent,
+                        { settings.brightness }, { settings.brightness = $0 })),
+                Form.row(
+                    "Contrast",
+                    control: Form.slider(
+                        range: 0...2, step: 0.01, format: relative,
+                        { settings.contrast }, { settings.contrast = $0 })),
+                Form.row(
+                    "Saturation",
+                    control: Form.slider(
+                        range: 0...2, step: 0.01, format: relative,
+                        { settings.saturation }, { settings.saturation = $0 }))
             ]
         )
         pictureRows.append(picture)
@@ -167,13 +194,17 @@ enum SettingsPanes {
         return [
             Form.section(
                 "Rendering",
-                footnote: "Metal uses libplacebo with HDR output and higher-quality scaling. OpenGL is a compatibility fallback; Lumora switches to it automatically if Metal can't start. Renderer changes apply to new player windows.",
+                footnote:
+                    "Metal uses libplacebo with HDR output and higher-quality scaling. OpenGL is a compatibility fallback; Lumora switches to it automatically if Metal can't start. Renderer changes apply to new player windows.",
                 rows: [
-                    Form.row("Renderer", control: Form.popup(
-                        VideoRenderer.allCases.map { ($0.title, $0) },
-                        { settings.renderer }, { settings.renderer = $0 })),
-                    Form.row("Hardware decoding", detail: "Uses the Mac's media engine for lower CPU use and longer battery life.",
-                             control: Form.toggle({ settings.hardwareDecoding }, { settings.hardwareDecoding = $0 }))
+                    Form.row(
+                        "Renderer",
+                        control: Form.popup(
+                            VideoRenderer.allCases.map { ($0.title, $0) },
+                            { settings.renderer }, { settings.renderer = $0 })),
+                    Form.row(
+                        "Hardware decoding", detail: "Uses the Mac's media engine for lower CPU use and longer battery life.",
+                        control: Form.toggle({ settings.hardwareDecoding }, { settings.hardwareDecoding = $0 }))
                 ]
             ),
             picture,
@@ -191,7 +222,8 @@ enum SettingsPanes {
         let syncPreset = { [weak preset] in
             guard let preset else { return }
             if let match = EqualizerPreset.matching(settings.equalizerGains),
-               let index = presets.firstIndex(of: match) {
+                let index = presets.firstIndex(of: match)
+            {
                 preset.selectItem(at: index)
             } else {
                 preset.selectItem(withTitle: "Custom")
@@ -223,59 +255,85 @@ enum SettingsPanes {
         ])
 
         return [
-            Form.section("Volume", rows: [
-                Form.row("Volume", detail: "Also changed with the player's volume control.", control: Form.slider(
-                    range: 0...1, step: 0.01,
-                    format: { "\(Int(($0 * 100).rounded()))%" },
-                    { Double(settings.volume) }, { settings.volume = Float($0) }))
-            ]),
-            Form.section("Equalizer", footnote: "Ten bands from 31 Hz to 16 kHz, ±12 dB.", rows: [
-                Form.row("Preset", control: Form.hStack([
-                    preset,
-                    Form.button("Reset") {
-                        settings.equalizerGains = EqualizerPreset.flat.gains
-                        equalizer.show(EqualizerPreset.flat.gains)
-                        syncPreset()
-                    }
-                ])),
-                equalizerRow
-            ])
+            Form.section(
+                "Volume",
+                rows: [
+                    Form.row(
+                        "Volume", detail: "Also changed with the player's volume control.",
+                        control: Form.slider(
+                            range: 0...1, step: 0.01,
+                            format: { "\(Int(($0 * 100).rounded()))%" },
+                            { Double(settings.volume) }, { settings.volume = Float($0) }))
+                ]),
+            Form.section(
+                "Equalizer", footnote: "Ten bands from 31 Hz to 16 kHz, ±12 dB.",
+                rows: [
+                    Form.row(
+                        "Preset",
+                        control: Form.hStack([
+                            preset,
+                            Form.button("Reset") {
+                                settings.equalizerGains = EqualizerPreset.flat.gains
+                                equalizer.show(EqualizerPreset.flat.gains)
+                                syncPreset()
+                            }
+                        ])),
+                    equalizerRow
+                ])
         ]
     }
 
     // MARK: Subtitles
 
     static func subtitles() -> [NSView] {
-        let appearance = Form.section("Appearance", rows: [
-            Form.row("Text size", control: Form.slider(range: 14...48, step: 1, format: { "\(Int($0)) pt" },
-                { settings.subtitleSize }, { settings.subtitleSize = $0 })),
-            Form.row("Delay", detail: "Positive values show subtitles later.", control: Form.slider(
-                range: -10...10, step: 0.1, format: { String(format: "%+.1f s", $0) },
-                { settings.subtitleDelay }, { settings.subtitleDelay = $0 }))
-        ])
+        let appearance = Form.section(
+            "Appearance",
+            rows: [
+                Form.row(
+                    "Text size",
+                    control: Form.slider(
+                        range: 14...48, step: 1, format: { "\(Int($0)) pt" },
+                        { settings.subtitleSize }, { settings.subtitleSize = $0 })),
+                Form.row(
+                    "Delay", detail: "Positive values show subtitles later.",
+                    control: Form.slider(
+                        range: -10...10, step: 0.1, format: { String(format: "%+.1f s", $0) },
+                        { settings.subtitleDelay }, { settings.subtitleDelay = $0 }))
+            ])
         return [
             appearance,
-            Form.hStack([NSView(), Form.button("Reset Appearance") {
-                settings.subtitleSize = 24
-                settings.subtitleDelay = 0
-                appearance.refreshBoundControls()
-            }]),
+            Form.hStack([
+                NSView(),
+                Form.button("Reset Appearance") {
+                    settings.subtitleSize = 24
+                    settings.subtitleDelay = 0
+                    appearance.refreshBoundControls()
+                }
+            ]),
             Form.section(
                 "OpenSubtitles",
                 footnote: "Your API key is stored in the macOS Keychain. Auto-download searches by the video's file name only.",
                 rows: [
-                    Form.row("Download subtitles automatically", control: Form.toggle(
-                        { settings.autoDownloadSubtitles }, { settings.autoDownloadSubtitles = $0 })),
-                    Form.row("Languages", detail: "Comma-separated codes, e.g. en, es, fr", control: Form.textField(
-                        placeholder: "en", width: 180, { settings.subtitleLanguages }, { settings.subtitleLanguages = $0 })),
-                    Form.row("API key", control: Form.textField(
-                        placeholder: "Paste your API key", secure: true, width: 220,
-                        { settings.openSubtitlesAPIKey }, { settings.openSubtitlesAPIKey = $0 })),
-                    Form.row("Don't have a key?", control: Form.button("Get a Free API Key") {
-                        if let url = URL(string: "https://www.opensubtitles.com/en/consumers") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    })
+                    Form.row(
+                        "Download subtitles automatically",
+                        control: Form.toggle(
+                            { settings.autoDownloadSubtitles }, { settings.autoDownloadSubtitles = $0 })),
+                    Form.row(
+                        "Languages", detail: "Comma-separated codes, e.g. en, es, fr",
+                        control: Form.textField(
+                            placeholder: "en", width: 180, { settings.subtitleLanguages }, { settings.subtitleLanguages = $0 })),
+                    Form.row(
+                        "API key",
+                        control: Form.textField(
+                            placeholder: "Paste your API key", secure: true, width: 220,
+                            { settings.openSubtitlesAPIKey }, { settings.openSubtitlesAPIKey = $0 })),
+                    Form.row(
+                        "Don't have a key?",
+                        control: Form.button("Get a Free API Key") {
+                            if let url = URL(string: "https://www.opensubtitles.com/en/consumers") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        })
                 ]
             )
         ]
@@ -330,10 +388,12 @@ enum SettingsPanes {
             field.stringValue = url.path
             updateStatus()
         }
-        return Form.section(title, footnote: footnote, rows: [
-            Form.row("\(label) location", control: Form.hStack([field, choose])),
-            Form.row("Status", control: status)
-        ])
+        return Form.section(
+            title, footnote: footnote,
+            rows: [
+                Form.row("\(label) location", control: Form.hStack([field, choose])),
+                Form.row("Status", control: status)
+            ])
     }
 
     // MARK: Advanced
@@ -344,43 +404,57 @@ enum SettingsPanes {
             NSWorkspace.shared.activateFileViewerSelecting([url])
         }
         return [
-            Form.section("Folders", rows: [
-                Form.row("Screenshots", control: Form.button("Show in Finder") { reveal(AppPaths.screenshots) }),
-                Form.row("Crash logs", detail: "Stored only on this Mac.", control: Form.button("Show in Finder") {
-                    reveal(AppPaths.logs)
-                }),
-                Form.row("Library and caches", control: Form.button("Show in Finder") { reveal(AppPaths.applicationSupport) })
-            ]),
-            Form.section("About", rows: [
-                Form.row("Third-party licenses", control: Form.button("View") {
-                    if let url = Bundle.main.url(forResource: "THIRD_PARTY_NOTICES", withExtension: "md") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }),
-                Form.row("Source code and releases", control: Form.button("Open GitHub") {
-                    if let url = URL(string: "https://github.com/amegh-ts/lumora") {
-                        NSWorkspace.shared.open(url)
-                    }
-                })
-            ]),
-            Form.section("Reset", footnote: "Restores every setting to its default. Your library, bookmarks and API key are kept.", rows: [
-                Form.row("Reset all settings", control: Form.button("Reset…") {
-                    let alert = NSAlert()
-                    alert.messageText = "Reset all settings?"
-                    alert.informativeText = "Every preference returns to its default. Your library, bookmarks and OpenSubtitles API key are kept."
-                    alert.addButton(withTitle: "Reset")
-                    alert.addButton(withTitle: "Cancel")
-                    alert.buttons.first?.hasDestructiveAction = true
-                    guard let window = SettingsWindowController.shared.window else { return }
-                    alert.beginSheetModal(for: window) { response in
-                        guard response == .alertFirstButtonReturn else { return }
-                        MainActor.assumeIsolated {
-                            settings.resetToDefaults()
-                            SettingsWindowController.shared.window?.contentView?.refreshBoundControls()
-                        }
-                    }
-                })
-            ])
+            Form.section(
+                "Folders",
+                rows: [
+                    Form.row("Screenshots", control: Form.button("Show in Finder") { reveal(AppPaths.screenshots) }),
+                    Form.row(
+                        "Crash logs", detail: "Stored only on this Mac.",
+                        control: Form.button("Show in Finder") {
+                            reveal(AppPaths.logs)
+                        }),
+                    Form.row("Library and caches", control: Form.button("Show in Finder") { reveal(AppPaths.applicationSupport) })
+                ]),
+            Form.section(
+                "About",
+                rows: [
+                    Form.row(
+                        "Third-party licenses",
+                        control: Form.button("View") {
+                            if let url = Bundle.main.url(forResource: "THIRD_PARTY_NOTICES", withExtension: "md") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }),
+                    Form.row(
+                        "Source code and releases",
+                        control: Form.button("Open GitHub") {
+                            if let url = URL(string: "https://github.com/amegh-ts/lumora") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        })
+                ]),
+            Form.section(
+                "Reset", footnote: "Restores every setting to its default. Your library, bookmarks and API key are kept.",
+                rows: [
+                    Form.row(
+                        "Reset all settings",
+                        control: Form.button("Reset…") {
+                            let alert = NSAlert()
+                            alert.messageText = "Reset all settings?"
+                            alert.informativeText = "Every preference returns to its default. Your library, bookmarks and OpenSubtitles API key are kept."
+                            alert.addButton(withTitle: "Reset")
+                            alert.addButton(withTitle: "Cancel")
+                            alert.buttons.first?.hasDestructiveAction = true
+                            guard let window = SettingsWindowController.shared.window else { return }
+                            alert.beginSheetModal(for: window) { response in
+                                guard response == .alertFirstButtonReturn else { return }
+                                MainActor.assumeIsolated {
+                                    settings.resetToDefaults()
+                                    SettingsWindowController.shared.window?.contentView?.refreshBoundControls()
+                                }
+                            }
+                        })
+                ])
         ]
     }
 }

@@ -3,7 +3,9 @@ import Foundation
 enum ConverterService {
     static let presets: [ConvertPreset] = [
         ConvertPreset(id: "h264", title: "H.264 / AAC MP4", arguments: ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-c:a", "aac", "-b:a", "192k"]),
-        ConvertPreset(id: "hevc", title: "HEVC / AAC MP4", arguments: ["-c:v", "libx265", "-preset", "medium", "-crf", "22", "-c:a", "aac", "-b:a", "192k", "-tag:v", "hvc1"]),
+        ConvertPreset(
+            id: "hevc", title: "HEVC / AAC MP4",
+            arguments: ["-c:v", "libx265", "-preset", "medium", "-crf", "22", "-c:a", "aac", "-b:a", "192k", "-tag:v", "hvc1"]),
         ConvertPreset(id: "av1", title: "AV1 / Opus WebM", arguments: ["-c:v", "libaom-av1", "-crf", "30", "-b:v", "0", "-c:a", "libopus", "-b:a", "128k"]),
         ConvertPreset(id: "audio-mp3", title: "Audio MP3", arguments: ["-vn", "-c:a", "libmp3lame", "-b:a", "192k"]),
         ConvertPreset(id: "audio-aac", title: "Audio AAC M4A", arguments: ["-vn", "-c:a", "aac", "-b:a", "192k"])

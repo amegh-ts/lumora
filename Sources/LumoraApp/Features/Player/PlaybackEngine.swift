@@ -48,9 +48,9 @@ final class PlaybackEngine: ObservableObject {
 
     private static var mpvLogging: Bool {
         #if DEBUG
-        return ProcessInfo.processInfo.environment["LUMORA_MPV_LOG"] != nil
+            return ProcessInfo.processInfo.environment["LUMORA_MPV_LOG"] != nil
         #else
-        return false
+            return false
         #endif
     }
 
@@ -217,7 +217,7 @@ final class PlaybackEngine: ObservableObject {
             candidates.append(resources.appendingPathComponent("vulkan/icd.d/MoltenVK_icd.json").path)
         }
         #if DEBUG
-        candidates.append("/opt/homebrew/opt/molten-vk/etc/vulkan/icd.d/MoltenVK_icd.json")
+            candidates.append("/opt/homebrew/opt/molten-vk/etc/vulkan/icd.d/MoltenVK_icd.json")
         #endif
         if let path = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) {
             setenv("VK_DRIVER_FILES", path, 1)
@@ -395,7 +395,8 @@ final class PlaybackEngine: ObservableObject {
             setProperty("af", "")
             return
         }
-        let chain = active
+        let chain =
+            active
             .map { "equalizer=f=\($0.0):t=o:w=1:g=\(String(format: "%.1f", $0.1))" }
             .joined(separator: ",")
         setProperty("af", "lavfi=[\(chain)]")
@@ -410,7 +411,8 @@ final class PlaybackEngine: ObservableObject {
         let url = AppPaths.screenshots.appendingPathComponent("\(title) \(formatter.string(from: Date())).png")
         nextReplyID += 1
         pendingScreenshots[nextReplyID] = url
-        command(["screenshot-to-file", url.path, includeSubtitles ? "subtitles" : "video"],
+        command(
+            ["screenshot-to-file", url.path, includeSubtitles ? "subtitles" : "video"],
             replyID: nextReplyID
         )
     }
@@ -418,8 +420,9 @@ final class PlaybackEngine: ObservableObject {
     private static func safeToolPath(_ path: String, fallback: String) -> String {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("/"),
-              !trimmed.contains(","), !trimmed.contains("="),
-              FileManager.default.isExecutableFile(atPath: trimmed) else { return fallback }
+            !trimmed.contains(","), !trimmed.contains("="),
+            FileManager.default.isExecutableFile(atPath: trimmed)
+        else { return fallback }
         return trimmed
     }
 
@@ -561,9 +564,10 @@ final class PlaybackEngine: ObservableObject {
         var video: [MediaTrack] = []
         for entry in list {
             guard let map = entry as? [String: Any],
-                  let id = map.int("id"),
-                  let type = map.string("type"),
-                  let kind = TrackKind(rawValue: type) else { continue }
+                let id = map.int("id"),
+                let type = map.string("type"),
+                let kind = TrackKind(rawValue: type)
+            else { continue }
             let track = MediaTrack(
                 id: id,
                 kind: kind,

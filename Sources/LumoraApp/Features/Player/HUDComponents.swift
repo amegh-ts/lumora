@@ -29,7 +29,8 @@ enum HUD {
 
     static func label(size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = primaryText, monospaced: Bool = false) -> NSTextField {
         let field = NSTextField(labelWithString: "")
-        field.font = monospaced
+        field.font =
+            monospaced
             ? .monospacedDigitSystemFont(ofSize: size, weight: weight)
             : .systemFont(ofSize: size, weight: weight)
         field.textColor = color
@@ -106,7 +107,8 @@ final class HUDButton: NSButton {
     }
 
     private func updateBackground() {
-        layer?.backgroundColor = isHovering && isEnabled
+        layer?.backgroundColor =
+            isHovering && isEnabled
             ? NSColor.white.withAlphaComponent(0.14).cgColor
             : NSColor.clear.cgColor
     }

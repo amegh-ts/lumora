@@ -1,0 +1,28 @@
+name: PR check
+
+# Fast checks only — no app or DMG build. See Scripts/pr-check.sh.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install libmpv for the compile check
+        run: brew install mpv
+      - name: Lint, metadata and compile checks
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: Scripts/pr-check.sh "origin/$BASE_REF"

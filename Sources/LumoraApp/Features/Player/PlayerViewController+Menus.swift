@@ -17,30 +17,34 @@ extension PlayerViewController {
         case .speed:
             for speed: Float in [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 4] {
                 let title = speed == 1 ? "Normal" : String(format: "%g×", speed)
-                menu.addItem(ClosureMenuItem(title, checked: abs(engine.rate - speed) < 0.01) { [weak self] in
-                    self?.setSpeed(speed)
-                })
+                menu.addItem(
+                    ClosureMenuItem(title, checked: abs(engine.rate - speed) < 0.01) { [weak self] in
+                        self?.setSpeed(speed)
+                    })
             }
         case .audioTracks:
             if engine.audioTracks.isEmpty {
                 menu.addItem(ClosureMenuItem("No Audio Tracks", enabled: false) {})
             }
             for track in engine.audioTracks {
-                menu.addItem(ClosureMenuItem(track.displayName, checked: track.isSelected) { [weak self] in
-                    self?.engine.selectAudioTrack(track.id)
-                    self?.osd.show("Audio: \(track.displayName)", symbol: "speaker.wave.2.fill")
-                })
+                menu.addItem(
+                    ClosureMenuItem(track.displayName, checked: track.isSelected) { [weak self] in
+                        self?.engine.selectAudioTrack(track.id)
+                        self?.osd.show("Audio: \(track.displayName)", symbol: "speaker.wave.2.fill")
+                    })
             }
         case .subtitleTracks:
-            menu.addItem(ClosureMenuItem("Off", checked: engine.selectedSubtitleTrackID == nil) { [weak self] in
-                self?.engine.selectSubtitleTrack(nil)
-                self?.osd.show("Subtitles off", symbol: "captions.bubble")
-            })
-            for track in engine.subtitleTracks {
-                menu.addItem(ClosureMenuItem(track.displayName, checked: track.isSelected) { [weak self] in
-                    self?.engine.selectSubtitleTrack(track.id)
-                    self?.osd.show("Subtitles: \(track.displayName)", symbol: "captions.bubble.fill")
+            menu.addItem(
+                ClosureMenuItem("Off", checked: engine.selectedSubtitleTrackID == nil) { [weak self] in
+                    self?.engine.selectSubtitleTrack(nil)
+                    self?.osd.show("Subtitles off", symbol: "captions.bubble")
                 })
+            for track in engine.subtitleTracks {
+                menu.addItem(
+                    ClosureMenuItem(track.displayName, checked: track.isSelected) { [weak self] in
+                        self?.engine.selectSubtitleTrack(track.id)
+                        self?.osd.show("Subtitles: \(track.displayName)", symbol: "captions.bubble.fill")
+                    })
             }
         case .chapters:
             if engine.chapters.isEmpty {
@@ -49,9 +53,10 @@ extension PlayerViewController {
             let current = engine.chapters.lastIndex { $0.time <= engine.currentTime + 0.5 }
             for (index, chapter) in engine.chapters.enumerated() {
                 let title = chapter.title.isEmpty ? "Chapter \(index + 1)" : chapter.title
-                menu.addItem(ClosureMenuItem("\(title)\t\(TimeFormatter.string(chapter.time))", checked: index == current) { [weak self] in
-                    self?.engine.seek(to: chapter.time)
-                })
+                menu.addItem(
+                    ClosureMenuItem("\(title)\t\(TimeFormatter.string(chapter.time))", checked: index == current) { [weak self] in
+                        self?.engine.seek(to: chapter.time)
+                    })
             }
         case .bookmarks:
             let bookmarks = engine.currentItem.flatMap { library.record(for: $0.url)?.bookmarks } ?? []
@@ -64,16 +69,18 @@ extension PlayerViewController {
         case .videoSize:
             let options: [(VideoGravityPreference, String)] = [(.aspect, "Fit"), (.fill, "Fill (Crop Edges)"), (.stretch, "Stretch")]
             for (preference, title) in options {
-                menu.addItem(ClosureMenuItem(title, checked: settings.videoGravity == preference) { [weak self] in
-                    self?.settings.videoGravity = preference
-                })
+                menu.addItem(
+                    ClosureMenuItem(title, checked: settings.videoGravity == preference) { [weak self] in
+                        self?.settings.videoGravity = preference
+                    })
             }
         case .repeatMode:
             let options: [(RepeatMode, String)] = [(.off, "Off"), (.all, "All Items"), (.one, "Current Item")]
             for (mode, title) in options {
-                menu.addItem(ClosureMenuItem(title, checked: settings.repeatMode == mode) { [weak self] in
-                    self?.settings.repeatMode = mode
-                })
+                menu.addItem(
+                    ClosureMenuItem(title, checked: settings.repeatMode == mode) { [weak self] in
+                        self?.settings.repeatMode = mode
+                    })
             }
         }
     }

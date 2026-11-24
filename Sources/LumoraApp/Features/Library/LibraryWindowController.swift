@@ -82,12 +82,14 @@ private final class LibraryViewController: NSViewController, NSTableViewDataSour
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let identifier = tableColumn?.identifier ?? NSUserInterfaceItemIdentifier("title")
-        let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView
+        let cell =
+            tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView
             ?? makeCell(identifier: identifier)
         let record = records[row]
         switch identifier.rawValue {
         case "progress":
-            cell.textField?.stringValue = record.watched
+            cell.textField?.stringValue =
+                record.watched
                 ? "Watched"
                 : "\(TimeFormatter.string(record.resumeTime)) / \(TimeFormatter.string(record.duration))"
         case "date":
@@ -128,9 +130,11 @@ private final class LibraryViewController: NSViewController, NSTableViewDataSour
     @objc private func openSelected(_ sender: NSTableView) {
         let row = sender.clickedRow
         guard row >= 0, row < records.count else { return }
-        guard let controller = NSApplication.shared.windows
-            .compactMap({ $0.windowController as? MainWindowController })
-            .first else { return }
+        guard
+            let controller = NSApplication.shared.windows
+                .compactMap({ $0.windowController as? MainWindowController })
+                .first
+        else { return }
         controller.open([records[row].url])
     }
 }

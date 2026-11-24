@@ -15,8 +15,13 @@ WORK="$ROOT/.build/appcast"
 rm -rf "$WORK"
 mkdir -p "$WORK"
 cp "$DMG" "$WORK/"
+# CI passes the private key through SPARKLE_KEY_FILE; locally the login Keychain is used.
+KEY_ARGS=(--account lumora)
+if [[ -n "${SPARKLE_KEY_FILE:-}" ]]; then
+    KEY_ARGS=(--ed-key-file "$SPARKLE_KEY_FILE")
+fi
 "$TOOLS/generate_appcast" \
-    --account lumora \
+    "${KEY_ARGS[@]}" \
     --download-url-prefix "$REPO_URL/releases/download/v$VERSION/" \
     --full-release-notes-url "$REPO_URL/releases/tag/v$VERSION" \
     --link "$REPO_URL" \

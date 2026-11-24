@@ -141,10 +141,12 @@ final class ThumbnailService {
     nonisolated private static func pruneDiskCache() {
         let directory = AppPaths.thumbnailCache
         let keys: [URLResourceKey] = [.contentAccessDateKey, .fileSizeKey]
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: keys
-        ) else { return }
+        guard
+            let files = try? FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: keys
+            )
+        else { return }
         let cutoff = Date().addingTimeInterval(-14 * 86_400)
         for file in files {
             let values = try? file.resourceValues(forKeys: Set(keys))

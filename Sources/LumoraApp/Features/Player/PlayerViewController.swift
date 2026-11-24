@@ -344,9 +344,10 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
     private func fitWindow(to size: CGSize) {
         guard size.width > 0, size.height > 0, !resizedForCurrentFile,
-              let window = view.window, !window.styleMask.contains(.fullScreen),
-              miniPlayerRestoreFrame == nil,
-              let screen = window.screen ?? NSScreen.main else { return }
+            let window = view.window, !window.styleMask.contains(.fullScreen),
+            miniPlayerRestoreFrame == nil,
+            let screen = window.screen ?? NSScreen.main
+        else { return }
         resizedForCurrentFile = true
         let rotated = engine.rotation % 180 != 0
         let videoSize = rotated ? CGSize(width: size.height, height: size.width) : size
@@ -399,10 +400,11 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         Task { @MainActor in
             let results = await OpenSubtitlesService.search(query: query, languages: languages, apiKey: apiKey)
             guard let result = results.first, self.engine.currentItem?.id == expected,
-                  let data = await OpenSubtitlesService.download(result: result, apiKey: apiKey),
-                  self.engine.currentItem?.id == expected,
-                  let track = SubtitleService.saveDownloaded(data, language: result.language, filename: result.title),
-                  let url = track.url else { return }
+                let data = await OpenSubtitlesService.download(result: result, apiKey: apiKey),
+                self.engine.currentItem?.id == expected,
+                let track = SubtitleService.saveDownloaded(data, language: result.language, filename: result.title),
+                let url = track.url
+            else { return }
             self.engine.addSubtitle(url)
             self.osd.show("Subtitle downloaded", symbol: "captions.bubble.fill")
         }
@@ -554,9 +556,10 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         menu.addHeader("Speed")
         for speed: Float in [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 4] {
             let title = speed == 1 ? "Normal" : String(format: "%g×", speed)
-            menu.addItem(ClosureMenuItem(title, checked: abs(engine.rate - speed) < 0.01) { [weak self] in
-                self?.setSpeed(speed)
-            })
+            menu.addItem(
+                ClosureMenuItem(title, checked: abs(engine.rate - speed) < 0.01) { [weak self] in
+                    self?.setSpeed(speed)
+                })
         }
         return menu
     }
@@ -568,28 +571,32 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             menu.addItem(ClosureMenuItem("No audio", enabled: false) {})
         }
         for track in engine.audioTracks {
-            menu.addItem(ClosureMenuItem(track.displayName, checked: track.isSelected) { [weak self] in
-                self?.engine.selectAudioTrack(track.id)
-                self?.osd.show("Audio: \(track.displayName)", symbol: "speaker.wave.2.fill")
-            })
+            menu.addItem(
+                ClosureMenuItem(track.displayName, checked: track.isSelected) { [weak self] in
+                    self?.engine.selectAudioTrack(track.id)
+                    self?.osd.show("Audio: \(track.displayName)", symbol: "speaker.wave.2.fill")
+                })
         }
         menu.addItem(.separator())
         menu.addHeader("Subtitles")
-        menu.addItem(ClosureMenuItem("Off", checked: engine.selectedSubtitleTrackID == nil) { [weak self] in
-            self?.engine.selectSubtitleTrack(nil)
-            self?.osd.show("Subtitles off", symbol: "captions.bubble")
-        })
-        for track in engine.subtitleTracks {
-            menu.addItem(ClosureMenuItem(track.displayName, checked: track.isSelected) { [weak self] in
-                self?.engine.selectSubtitleTrack(track.id)
-                self?.osd.show("Subtitles: \(track.displayName)", symbol: "captions.bubble.fill")
+        menu.addItem(
+            ClosureMenuItem("Off", checked: engine.selectedSubtitleTrackID == nil) { [weak self] in
+                self?.engine.selectSubtitleTrack(nil)
+                self?.osd.show("Subtitles off", symbol: "captions.bubble")
             })
+        for track in engine.subtitleTracks {
+            menu.addItem(
+                ClosureMenuItem(track.displayName, checked: track.isSelected) { [weak self] in
+                    self?.engine.selectSubtitleTrack(track.id)
+                    self?.osd.show("Subtitles: \(track.displayName)", symbol: "captions.bubble.fill")
+                })
         }
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem("Add Subtitle File…") { [weak self] in self?.chooseSubtitleFile() })
-        menu.addItem(ClosureMenuItem("Search Subtitles Online…") {
-            SubtitleSearchWindowController.shared.showWindow(nil)
-        })
+        menu.addItem(
+            ClosureMenuItem("Search Subtitles Online…") {
+                SubtitleSearchWindowController.shared.showWindow(nil)
+            })
         menu.addItem(.separator())
         let delay = NSMenuItem(title: "Subtitle Delay: \(String(format: "%+.1f", settings.subtitleDelay)) s", action: nil, keyEquivalent: "")
         let delayMenu = NSMenu()
@@ -622,9 +629,10 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             let submenu = NSMenu()
             for (index, chapter) in engine.chapters.enumerated() {
                 let title = chapter.title.isEmpty ? "Chapter \(index + 1)" : chapter.title
-                submenu.addItem(ClosureMenuItem("\(title)  \(TimeFormatter.string(chapter.time))") { [weak self] in
-                    self?.engine.seek(to: chapter.time)
-                })
+                submenu.addItem(
+                    ClosureMenuItem("\(title)  \(TimeFormatter.string(chapter.time))") { [weak self] in
+                        self?.engine.seek(to: chapter.time)
+                    })
             }
             parent.submenu = submenu
             menu.addItem(parent)
@@ -646,9 +654,10 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         let aspectMenu = NSMenu()
         let titles: [(VideoGravityPreference, String)] = [(.aspect, "Fit"), (.fill, "Fill (crop)"), (.stretch, "Stretch")]
         for (preference, title) in titles {
-            aspectMenu.addItem(ClosureMenuItem(title, checked: settings.videoGravity == preference) { [weak self] in
-                self?.settings.videoGravity = preference
-            })
+            aspectMenu.addItem(
+                ClosureMenuItem(title, checked: settings.videoGravity == preference) { [weak self] in
+                    self?.settings.videoGravity = preference
+                })
         }
         aspect.submenu = aspectMenu
         menu.addItem(aspect)
@@ -656,13 +665,15 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         menu.addItem(.separator())
         let onTop = view.window?.level == .floating
         menu.addItem(ClosureMenuItem("Keep on Top", checked: onTop) { [weak self] in self?.toggleKeepOnTop(nil) })
-        menu.addItem(ClosureMenuItem("Mini Player", checked: miniPlayerRestoreFrame != nil) { [weak self] in
-            self?.toggleMiniPlayer(nil)
-        })
+        menu.addItem(
+            ClosureMenuItem("Mini Player", checked: miniPlayerRestoreFrame != nil) { [weak self] in
+                self?.toggleMiniPlayer(nil)
+            })
         menu.addItem(.separator())
-        menu.addItem(ClosureMenuItem("Video & Audio Settings…") {
-            SettingsWindowController.shared.showWindow(nil)
-        })
+        menu.addItem(
+            ClosureMenuItem("Video & Audio Settings…") {
+                SettingsWindowController.shared.showWindow(nil)
+            })
         return menu
     }
 
@@ -961,7 +972,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             menuItem.state = miniPlayerRestoreFrame != nil ? .on : .off
             return engine.hasMedia || miniPlayerRestoreFrame != nil
         case #selector(togglePlayback(_:)), #selector(stopPlayback(_:)), #selector(takeScreenshot(_:)),
-             #selector(cycleSubtitles(_:)), #selector(cycleAudio(_:)), #selector(cycleABLoop(_:)):
+            #selector(cycleSubtitles(_:)), #selector(cycleAudio(_:)), #selector(cycleABLoop(_:)):
             return engine.hasMedia
         case #selector(nextItem(_:)), #selector(previousItem(_:)):
             return playlist.items.count > 1
@@ -978,11 +989,11 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             menuItem.title = isPlaylistVisible ? "Hide Playlist" : "Show Playlist"
             return true
         case #selector(jumpForward(_:)), #selector(jumpBackward(_:)), #selector(jumpForwardLong(_:)),
-             #selector(jumpBackwardLong(_:)), #selector(nextFrame(_:)), #selector(previousFrame(_:)),
-             #selector(speedUp(_:)), #selector(slowDown(_:)), #selector(normalSpeed(_:)),
-             #selector(addBookmarkAction(_:)), #selector(volumeUp(_:)), #selector(volumeDown(_:)),
-             #selector(addSubtitleFile(_:)), #selector(subtitleEarlier(_:)), #selector(subtitleLater(_:)),
-             #selector(resetSubtitleDelay(_:)), #selector(rotateVideo(_:)):
+            #selector(jumpBackwardLong(_:)), #selector(nextFrame(_:)), #selector(previousFrame(_:)),
+            #selector(speedUp(_:)), #selector(slowDown(_:)), #selector(normalSpeed(_:)),
+            #selector(addBookmarkAction(_:)), #selector(volumeUp(_:)), #selector(volumeDown(_:)),
+            #selector(addSubtitleFile(_:)), #selector(subtitleEarlier(_:)), #selector(subtitleLater(_:)),
+            #selector(resetSubtitleDelay(_:)), #selector(rotateVideo(_:)):
             return engine.hasMedia
         default:
             return true
