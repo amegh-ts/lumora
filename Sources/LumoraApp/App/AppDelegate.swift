@@ -100,98 +100,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func installMainMenu() {
-        let mainMenu = NSMenu()
-
-        let appMenu = submenu(in: mainMenu, title: "Lumora")
-        appMenu.addItem(withTitle: "About Lumora", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
-        appMenu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
-        appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
-        appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Hide Lumora", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        item(appMenu, "Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option])
-        appMenu.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
-        appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit Lumora", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-
-        let fileMenu = submenu(in: mainMenu, title: "File")
-        fileMenu.addItem(withTitle: "New Player Window", action: #selector(newPlayerWindow(_:)), keyEquivalent: "n")
-        fileMenu.addItem(withTitle: "Open…", action: #selector(openDocument(_:)), keyEquivalent: "o")
-        fileMenu.addItem(withTitle: "Open URL…", action: #selector(openNetworkStream(_:)), keyEquivalent: "u")
-        fileMenu.addItem(.separator())
-        fileMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-
-        let editMenu = submenu(in: mainMenu, title: "Edit")
-        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
-        item(editMenu, "Redo", Selector(("redo:")), "z", [.command, .shift])
-        editMenu.addItem(.separator())
-        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
-
-        let playbackMenu = submenu(in: mainMenu, title: "Playback")
-        playbackMenu.addItem(withTitle: "Play / Pause    Space", action: #selector(PlayerViewController.togglePlayback(_:)), keyEquivalent: "")
-        playbackMenu.addItem(withTitle: "Stop", action: #selector(PlayerViewController.stopPlayback(_:)), keyEquivalent: ".")
-        playbackMenu.addItem(.separator())
-        item(playbackMenu, "Next Item", #selector(PlayerViewController.nextItem(_:)), String(Character(UnicodeScalar(NSRightArrowFunctionKey)!)), [.command])
-        item(playbackMenu, "Previous Item", #selector(PlayerViewController.previousItem(_:)), String(Character(UnicodeScalar(NSLeftArrowFunctionKey)!)), [.command])
-        playbackMenu.addItem(withTitle: "Cycle Repeat Mode", action: #selector(PlayerViewController.cycleRepeatMode(_:)), keyEquivalent: "")
-        playbackMenu.addItem(.separator())
-        playbackMenu.addItem(withTitle: "A-B Loop    L", action: #selector(PlayerViewController.cycleABLoop(_:)), keyEquivalent: "")
-        playbackMenu.addItem(withTitle: "Next Audio Track    A", action: #selector(PlayerViewController.cycleAudio(_:)), keyEquivalent: "")
-        playbackMenu.addItem(withTitle: "Next Subtitle    T", action: #selector(PlayerViewController.cycleSubtitles(_:)), keyEquivalent: "")
-        playbackMenu.addItem(.separator())
-        item(playbackMenu, "Take Screenshot", #selector(PlayerViewController.takeScreenshot(_:)), "s", [.command, .shift])
-
-        let viewMenu = submenu(in: mainMenu, title: "View")
-        item(viewMenu, "Enter Full Screen", #selector(PlayerViewController.toggleFullscreen(_:)), "f", [.command, .control])
-        item(viewMenu, "Mini Player", #selector(PlayerViewController.toggleMiniPlayer(_:)), "m", [.command, .option])
-        item(viewMenu, "Keep on Top", #selector(PlayerViewController.toggleKeepOnTop(_:)), "t", [.command, .option])
-        viewMenu.addItem(.separator())
-        viewMenu.addItem(withTitle: "Show Playlist", action: #selector(PlayerViewController.togglePlaylist(_:)), keyEquivalent: "l")
-        item(viewMenu, "Library", #selector(showLibrary(_:)), "l", [.command, .shift])
-
-        let toolsMenu = submenu(in: mainMenu, title: "Tools")
-        toolsMenu.addItem(withTitle: "Search Subtitles Online…", action: #selector(searchSubtitles(_:)), keyEquivalent: "")
-        toolsMenu.addItem(withTitle: "Convert Media…", action: #selector(convertMedia(_:)), keyEquivalent: "")
-
-        let windowMenu = submenu(in: mainMenu, title: "Window")
-        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
-        NSApp.windowsMenu = windowMenu
-
-        let helpMenu = submenu(in: mainMenu, title: "Help")
-        helpMenu.addItem(withTitle: "Keyboard Shortcuts", action: #selector(showShortcuts(_:)), keyEquivalent: "/")
-        NSApp.helpMenu = helpMenu
-
-        NSApp.mainMenu = mainMenu
+        NSApp.mainMenu = MainMenuBuilder.build { [weak self] url in
+            self?.activeController().open([url])
+        }
     }
 
-    private func submenu(in menu: NSMenu, title: String) -> NSMenu {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        let submenu = NSMenu(title: title)
-        item.submenu = submenu
-        menu.addItem(item)
-        return submenu
+    @objc func showAudioSettings(_ sender: Any?) {
+        SettingsWindowController.shared.show(pane: "Audio")
+        NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func item(_ menu: NSMenu, _ title: String, _ action: Selector, _ key: String, _ modifiers: NSEvent.ModifierFlags) {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
-        item.keyEquivalentModifierMask = modifiers
-        menu.addItem(item)
+    @objc func showVideoSettings(_ sender: Any?) {
+        SettingsWindowController.shared.show(pane: "Video")
+        NSApp.activate(ignoringOtherApps: true)
     }
 
-    @objc private func showSettings(_ sender: Any?) {
+    @objc func showSubtitleSettings(_ sender: Any?) {
+        SettingsWindowController.shared.show(pane: "Subtitles")
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func openProjectPage(_ sender: Any?) {
+        if let url = URL(string: "https://github.com/amegh-ts/lumora") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc func reportIssue(_ sender: Any?) {
+        if let url = URL(string: "https://github.com/amegh-ts/lumora/issues/new") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc func showSettings(_ sender: Any?) {
         SettingsWindowController.shared.showWindow(sender)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    @objc private func newPlayerWindow(_ sender: Any?) {
+    @objc func newPlayerWindow(_ sender: Any?) {
         _ = newController()
     }
 
-    @objc private func openDocument(_ sender: Any?) {
+    @objc func openDocument(_ sender: Any?) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
@@ -205,32 +155,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func openNetworkStream(_ sender: Any?) {
+    @objc func openNetworkStream(_ sender: Any?) {
         let controller = activeController()
         controller.showWindow(nil)
         controller.promptForURL()
     }
 
-    @objc private func showLibrary(_ sender: Any?) {
+    @objc func showLibrary(_ sender: Any?) {
         LibraryWindowController.shared.showWindow(sender)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    @objc private func searchSubtitles(_ sender: Any?) {
+    @objc func searchSubtitles(_ sender: Any?) {
         SubtitleSearchWindowController.shared.showWindow(sender)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    @objc private func convertMedia(_ sender: Any?) {
+    @objc func convertMedia(_ sender: Any?) {
         ConverterWindowController.shared.showWindow(sender)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    @objc private func checkForUpdates(_ sender: Any?) {
+    @objc func checkForUpdates(_ sender: Any?) {
         Updater.shared.checkForUpdates()
     }
 
-    @objc private func showShortcuts(_ sender: Any?) {
+    @objc func showShortcuts(_ sender: Any?) {
         let alert = NSAlert()
         alert.messageText = "Keyboard Shortcuts"
         alert.informativeText = """
@@ -242,6 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         , / . — previous / next frame
         L — A-B loop;  B — bookmark
         A — next audio track;  T — next subtitle
+        Z / X — subtitles earlier / later
         M — mute;  S — screenshot;  P — playlist
         ⌘← / ⌘→ — previous / next item
         ⌥⌘M — mini player;  ⌥⌘T — keep on top

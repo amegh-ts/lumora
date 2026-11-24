@@ -5,16 +5,16 @@ import UniformTypeIdentifiers
 @MainActor
 final class PlayerViewController: NSViewController, PlayerRootViewDelegate, PlaylistSidebarDelegate, NSMenuItemValidation {
     let engine: PlaybackEngine
-    private let playlist: PlaylistStore
-    private let settings: SettingsStore
-    private let library: LibraryStore
+    let playlist: PlaylistStore
+    let settings: SettingsStore
+    let library: LibraryStore
 
     private let rootView = PlayerRootView(frame: NSRect(x: 0, y: 0, width: 1120, height: 700))
     private let videoView: VideoView
     private let controls = ControlsOverlay(frame: .zero)
     private let titleBar = TitleOverlayView(frame: .zero)
     private let emptyState = EmptyStateView(frame: .zero)
-    private let osd = OSDView(frame: .zero)
+    let osd = OSDView(frame: .zero)
     private let thumbnail = ThumbnailPreviewView(frame: .zero)
     private let spinner = NSProgressIndicator()
     private lazy var sidebar = PlaylistSidebar(store: playlist)
@@ -29,7 +29,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     private var resizedForCurrentFile = false
     private var thumbnailToken = 0
     private var scrollAccumulator: CGFloat = 0
-    private var miniPlayerRestoreFrame: NSRect?
+    var miniPlayerRestoreFrame: NSRect?
     private var pendingSubtitles: [URL] = []
 
     var playlistCount: Int { playlist.items.count }
@@ -299,6 +299,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     }
 
     private func applySettings() {
+        if abs(engine.volume - settings.volume) > 0.005 {
+            engine.setVolume(settings.volume)
+        }
         engine.setGravity(settings.videoGravity)
         engine.setVideoAdjustments(brightness: settings.brightness, contrast: settings.contrast, saturation: settings.saturation)
         engine.setSubtitleScale(settings.subtitleSize / 24)
@@ -494,6 +497,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         }
     }
 
+    var isPlaylistVisible: Bool { !sidebar.isHidden }
+
     private func togglePlaylist() {
         let show = sidebar.isHidden
         sidebar.isHidden = !show
@@ -519,7 +524,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         }
     }
 
-    private func chooseSubtitleFile() {
+    func chooseSubtitleFile() {
         guard let window = view.window else { return }
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
@@ -680,17 +685,17 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         return menu
     }
 
-    private func setSpeed(_ speed: Float) {
+    func setSpeed(_ speed: Float) {
         engine.setRate(speed)
         osd.show(speed == 1 ? "Normal speed" : String(format: "Speed %g×", speed), symbol: "gauge.with.dots.needle.67percent")
     }
 
-    private func adjustSubtitleDelay(_ delta: TimeInterval?) {
+    func adjustSubtitleDelay(_ delta: TimeInterval?) {
         settings.subtitleDelay = delta.map { ((settings.subtitleDelay + $0) * 10).rounded() / 10 } ?? 0
         osd.show(String(format: "Subtitle delay %+.1f s", settings.subtitleDelay), symbol: "captions.bubble")
     }
 
-    private func addBookmark() {
+    func addBookmark() {
         guard let item = engine.currentItem else { return }
         library.addBookmark(url: item.url, time: engine.currentTime, label: TimeFormatter.string(engine.currentTime))
         osd.show("Bookmark added at \(TimeFormatter.string(engine.currentTime))", symbol: "bookmark.fill")
@@ -806,7 +811,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         return true
     }
 
-    private func changeVolume(by delta: Float) {
+    func changeVolume(by delta: Float) {
         engine.setVolume(engine.volume + delta)
         settings.volume = engine.volume
         osd.show("Volume \(Int((engine.volume * 100).rounded()))%", symbol: "speaker.wave.2.fill", duration: 0.8)
@@ -960,6 +965,25 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             return engine.hasMedia
         case #selector(nextItem(_:)), #selector(previousItem(_:)):
             return playlist.items.count > 1
+        case #selector(toggleShuffle(_:)):
+            menuItem.state = settings.shuffle ? .on : .off
+            return true
+        case #selector(toggleMute(_:)):
+            menuItem.title = engine.isMuted ? "Unmute" : "Mute"
+            return engine.hasMedia
+        case #selector(toggleFullscreen(_:)):
+            menuItem.title = view.window?.styleMask.contains(.fullScreen) == true ? "Exit Full Screen" : "Enter Full Screen"
+            return true
+        case #selector(togglePlaylist(_:)):
+            menuItem.title = isPlaylistVisible ? "Hide Playlist" : "Show Playlist"
+            return true
+        case #selector(jumpForward(_:)), #selector(jumpBackward(_:)), #selector(jumpForwardLong(_:)),
+             #selector(jumpBackwardLong(_:)), #selector(nextFrame(_:)), #selector(previousFrame(_:)),
+             #selector(speedUp(_:)), #selector(slowDown(_:)), #selector(normalSpeed(_:)),
+             #selector(addBookmarkAction(_:)), #selector(volumeUp(_:)), #selector(volumeDown(_:)),
+             #selector(addSubtitleFile(_:)), #selector(subtitleEarlier(_:)), #selector(subtitleLater(_:)),
+             #selector(resetSubtitleDelay(_:)), #selector(rotateVideo(_:)):
+            return engine.hasMedia
         default:
             return true
         }

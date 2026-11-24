@@ -63,6 +63,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         fatalError("init(coder:) has not been implemented")
     }
 
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        playerViewController.leaveMiniPlayerIfNeeded()
+    }
+
     func windowWillClose(_ notification: Notification) {
         playerViewController.tearDown()
         onClose?(self)
