@@ -342,14 +342,23 @@ final class PlaybackEngine: ObservableObject {
             statusMessage = "Opening \(item.title)…"
             fileOptions = ["demuxer-max-bytes=32MiB", "demuxer-max-back-bytes=8MiB"]
         } else {
-            let isDirectMedia = Self.isDirectMediaURL(item.url)
-            statusMessage = isDirectMedia ? "Connecting…" : "Fetching video from \(item.url.host ?? "the web")…"
+            let isChannel = item.kind == .channel
+            let isDirectMedia = isChannel || Self.isDirectMediaURL(item.url)
+            statusMessage = isChannel ? "Tuning to \(item.title)…" : isDirectMedia ? "Connecting…" : "Fetching video from \(item.url.host ?? "the web")…"
             fileOptions = [
                 "cache=yes", "cache-secs=120", "demuxer-max-bytes=128MiB", "demuxer-max-back-bytes=48MiB",
                 "demuxer-seekable-cache=yes"
             ]
             if isDirectMedia {
                 fileOptions.append("ytdl=no")
+            }
+            // Per-stream headers from channel lists. "%n%value" passes the value verbatim, since
+            // browser identities contain commas.
+            if let agent = item.userAgent, !agent.isEmpty {
+                fileOptions.append("user-agent=%\(agent.utf8.count)%\(agent)")
+            }
+            if let referrer = item.referrer, !referrer.isEmpty {
+                fileOptions.append("referrer=%\(referrer.utf8.count)%\(referrer)")
             }
         }
         if resumeTime > 1 {
@@ -1061,7 +1070,8 @@ final class PlaybackEngine: ObservableObject {
         // Live: no known end, only the downloaded part can be seeked (a stream without a fixed
         // length), or Icecast/Shoutcast radio, which reports a growing "duration".
         let radio = mediaTags["icy-name"] != nil || mediaTags["icy-title"] != nil
-        let live = isFileLoaded && isStream && (duration <= 0 || isPartiallySeekable || radio)
+        let channel = currentItem?.kind == .channel
+        let live = isFileLoaded && isStream && (channel || duration <= 0 || isPartiallySeekable || radio)
         if live != isLive { isLive = live }
     }
 

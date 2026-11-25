@@ -55,6 +55,12 @@
 - Convert Media: drop a file, pick a format with a plain description, choose where to save, cancel, show the result in Finder.
 - Open URL fills in a link from the clipboard and accepts links typed without https://.
 
+## Live TV (Channels)
+- Window › Channels (⇧⌘T): add M3U channel lists by link or file (iptv-org presets: 11,000+ free channels, or by country, news, movies, music, sports), or paste a list link into Open URL.
+- Categories with counts, country filter, search, channel logos, favourites and recently watched; lists are kept on this Mac and refreshed daily.
+- Double-click to watch; ⌘← / ⌘→ switch channels. Per-channel browser identity and referrer (#EXTVLCOPT) are sent. An unavailable channel says so instead of skipping ahead.
+- Downloaded lists can only point at network streams. TV guide, IPTV logins and internet radio are planned (#45).
+
 ## Crash reports
 - After a crash, Lumora offers on the next launch to open a pre-filled GitHub issue: Lumora and macOS versions, Mac model, renderer, crash reason and the crashed thread's stack, plus the last player messages. File names, titles, links and home-folder paths are removed, and nothing is sent unless you submit the issue. "Copy Report" is there for anyone without a GitHub account; the offer can be turned off in Settings › Advanced.
 

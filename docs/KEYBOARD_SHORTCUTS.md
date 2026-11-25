@@ -49,6 +49,7 @@ Every shortcut is also listed next to its command in the menu bar.
 | ⌥⌘T | Keep on top |
 | P | Show / hide playlist |
 | ⇧⌘L | Library |
+| ⇧⌘T | Channels (live TV) |
 
 ## App
 | Key | Action |

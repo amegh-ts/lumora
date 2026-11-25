@@ -76,6 +76,7 @@ final class KeyboardShortcutsWindowController: NSWindowController, NSSearchField
                 Shortcut(keys: ["⌘U"], action: "Open URL"),
                 Shortcut(keys: ["⌘N"], action: "New player window"),
                 Shortcut(keys: ["⇧⌘L"], action: "Library"),
+                Shortcut(keys: ["⇧⌘T"], action: "Channels (live TV)"),
                 Shortcut(keys: ["⌘,"], action: "Settings"),
                 Shortcut(keys: ["⌘/"], action: "Keyboard shortcuts")
             ]),

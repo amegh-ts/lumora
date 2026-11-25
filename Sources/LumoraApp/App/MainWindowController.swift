@@ -103,6 +103,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             openYouTubePlaylist(media[0])
             return
         }
+        if media.count == 1, !media[0].isFileURL, ["m3u", "m3u8"].contains(media[0].pathExtension.lowercased()) {
+            openPossibleChannelList(media[0])
+            return
+        }
         // Folders can hold thousands of files (or sit on a slow network share): list them off the main thread.
         Task { [weak self] in
             let expanded = await Self.expandInBackground(media)
@@ -251,6 +255,35 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             PlaylistImporter.allowedSchemes.contains(scheme)
         else { return nil }
         return url
+    }
+
+    func playChannels(_ items: [PlaybackItem], startAt index: Int) {
+        guard items.indices.contains(index) else { return }
+        showWindow(nil)
+        playerViewController.saveProgress(force: true)
+        playlist.clear()
+        playlist.add(items)
+        playlist.select(at: index)
+        playCurrent()
+    }
+
+    /// A single .m3u link: a channel list goes to Channels, a stream playlist plays here.
+    private func openPossibleChannelList(_ url: URL) {
+        playerViewController.osd.show("Reading the list…", symbol: "list.bullet.rectangle", duration: 3)
+        Task { [weak self] in
+            let result = await ChannelStore.fetch(url)
+            guard let self else { return }
+            if case .success(let channels) = result, channels.count > 1 {
+                DebugTimeline.log("channel list \(channels.count) channels")
+                let id = ChannelStore.shared.addSource(url: url, channels: channels)
+                ChannelsWindowController.shared.show(source: id)
+                AppDelegate.activateApp()
+                return
+            }
+            self.playlist.add([PlaybackItem(url: url)])
+            self.playlist.select(at: self.playlist.items.count - 1)
+            self.playCurrent()
+        }
     }
 
     func playCurrent() {
