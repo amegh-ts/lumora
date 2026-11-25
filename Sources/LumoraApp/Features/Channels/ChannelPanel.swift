@@ -46,6 +46,11 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     private let placeholderButtons = NSStackView()
     private let spinner = NSProgressIndicator()
     private var channels: [Channel] = []
+    /// All tab with no category, country or search: a short category menu instead of 11,000 rows.
+    private var browseRows: [(title: String, group: String?, count: Int)] = []
+    private var showsAllChannels = false
+    private var isBrowsing: Bool { !browseRows.isEmpty }
+    private let backButton = NSButton(title: "‹ Categories", target: nil, action: nil)
     private var categories: [String] = []
     private var countries: [String] = []
     private var tab: Tab = .all
@@ -120,6 +125,12 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         filters.distribution = .fillEqually
         filters.spacing = 6
 
+        backButton.isBordered = false
+        backButton.font = .systemFont(ofSize: 11, weight: .semibold)
+        backButton.contentTintColor = HUD.accent
+        backButton.target = self
+        backButton.action = #selector(backToCategories(_:))
+        backButton.isHidden = true
         scopeLabel.font = .systemFont(ofSize: 11)
         scopeLabel.textColor = HUD.secondaryText
         scopeLabel.lineBreakMode = .byTruncatingTail
@@ -169,16 +180,18 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         placeholder.orientation = .vertical
         placeholder.spacing = 10
 
-        let stack = NSStackView(views: [header, tabs, searchField, filters, scopeLabel, scroll])
+        let scopeRow = NSStackView(views: [backButton, scopeLabel])
+        scopeRow.spacing = 6
+        let stack = NSStackView(views: [header, tabs, searchField, filters, scopeRow, scroll])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
-        stack.setCustomSpacing(4, after: scopeLabel)
+        stack.setCustomSpacing(4, after: scopeRow)
         stack.translatesAutoresizingMaskIntoConstraints = false
         placeholder.translatesAutoresizingMaskIntoConstraints = false
         panel.content.addSubview(stack)
         panel.content.addSubview(placeholder)
-        for view in [header, tabs, searchField, filters, scopeLabel, scroll] {
+        for view in [header, tabs, searchField, filters, scopeRow, scroll] {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
         NSLayoutConstraint.activate([
@@ -201,11 +214,23 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     }
 
     /// Opens on the tab that has something: Favourites if any, else All.
+    /// Opens on Favourites if there are any, else Recent, else the category menu; while a
+    /// channel plays, on the view that contains it.
     func prepareToShow() {
         store.loadIfNeeded()
-        if tab == .all, !store.favourites.isEmpty, playingKey == nil {
-            tab = .favourites
+        if playingKey == nil, categoryPopup.selectedIndex == 0, countryPopup.selectedIndex == 0, searchField.stringValue.isEmpty {
+            tab = !store.favourites.isEmpty ? .favourites : !store.recent.isEmpty ? .recent : .all
             tabs.selectedSegment = tab.rawValue
+            showsAllChannels = false
+        }
+        // Watching from the All tab: open the playing channel's category, not the menu.
+        if let playingKey, tab == .all, categoryPopup.selectedIndex == 0, countryPopup.selectedIndex == 0,
+            searchField.stringValue.isEmpty, !showsAllChannels, let channel = store.channel(forKey: playingKey)
+        {
+            reload()
+            if let index = categories.firstIndex(of: channel.group) {
+                categoryPopup.select(index: index + 1, notify: false)
+            }
         }
         reload()
         revealPlaying()
@@ -254,16 +279,31 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         let country = countryPopup.selectedIndex > 0 ? countries[safe: countryPopup.selectedIndex - 1] : nil
         let query = searchField.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
         let number = Int(query)
-        channels = base.filter { channel in
-            if let category, channel.group != category { return false }
-            if let country, channel.country != country { return false }
-            if query.isEmpty { return true }
-            if let number, store.number(of: channel) == number { return true }
-            return channel.name.lowercased().contains(query)
+        let browsing = tab == .all && category == nil && country == nil && query.isEmpty && !showsAllChannels
+        if browsing {
+            browseRows =
+                [("All Channels", nil, base.count)]
+                + categories.map { (title: $0, group: Optional($0), count: groupCounts[$0] ?? 0) }
+        } else {
+            browseRows = []
         }
+        backButton.isHidden = !(tab == .all && !browsing && (category != nil || showsAllChannels))
+        channels =
+            browsing
+            ? []
+            : base.filter { channel in
+                if let category, channel.group != category { return false }
+                if let country, channel.country != country { return false }
+                if query.isEmpty { return true }
+                if let number, store.number(of: channel) == number { return true }
+                return channel.name.lowercased().contains(query)
+            }
         table.reloadData()
         revealPlaying(scroll: false)
-        scopeLabel.stringValue = scopeTitle + " · \(channels.count.formatted()) channel\(channels.count == 1 ? "" : "s")"
+        scopeLabel.stringValue =
+            browsing
+            ? "Choose a category, or search all \(base.count.formatted()) channels"
+            : scopeTitle + " · \(channels.count.formatted()) channel\(channels.count == 1 ? "" : "s")"
         updatePlaceholder()
         rebuildListsMenu()
     }
@@ -298,7 +338,7 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         } else if channels.isEmpty {
             placeholderLabel.stringValue = "No channels match."
         }
-        placeholder.isHidden = !(noLists || channels.isEmpty)
+        placeholder.isHidden = !(noLists || (channels.isEmpty && !isBrowsing))
     }
 
     private func updateLoading() {
@@ -376,8 +416,23 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
 
     // MARK: Actions
 
+    #if DEBUG
+        func debugSelectAllTab() {
+            tabs.selectedSegment = Tab.all.rawValue
+            tabChanged(tabs)
+        }
+    #endif
+
+    @objc private func backToCategories(_ sender: Any?) {
+        showsAllChannels = false
+        categoryPopup.select(index: 0, notify: false)
+        reload()
+        table.scrollRowToVisible(0)
+    }
+
     @objc private func tabChanged(_ sender: NSSegmentedControl) {
         tab = Tab(rawValue: sender.selectedSegment) ?? .all
+        showsAllChannels = false
         categoryPopup.select(index: 0, notify: false)
         countryPopup.select(index: 0, notify: false)
         reload()
@@ -417,12 +472,28 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     }
 
     @objc private func rowClicked(_ sender: NSTableView) {
-        play(row: sender.clickedRow)
+        if isBrowsing {
+            openCategory(row: sender.clickedRow)
+        } else {
+            play(row: sender.clickedRow)
+        }
+    }
+
+    private func openCategory(row: Int) {
+        guard browseRows.indices.contains(row) else { return }
+        if let group = browseRows[row].group, let index = categories.firstIndex(of: group) {
+            categoryPopup.select(index: index + 1, notify: false)
+        } else {
+            showsAllChannels = true
+        }
+        reload()
+        table.scrollRowToVisible(0)
+        revealPlaying()
     }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 36 || event.keyCode == 76, table.selectedRow >= 0 {
-            play(row: table.selectedRow)
+            if isBrowsing { openCategory(row: table.selectedRow) } else { play(row: table.selectedRow) }
         } else if event.keyCode == 53 {
             closePanel(nil)
         } else {
@@ -441,13 +512,19 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
 
     // MARK: Table
 
-    func numberOfRows(in tableView: NSTableView) -> Int { channels.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { isBrowsing ? browseRows.count : channels.count }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
         tableView.makeView(withIdentifier: ChannelRowBackground.identifier, owner: self) as? ChannelRowBackground ?? ChannelRowBackground()
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if isBrowsing {
+            let entry = browseRows[row]
+            let cell = tableView.makeView(withIdentifier: CategoryRow.identifier, owner: self) as? CategoryRow ?? CategoryRow()
+            cell.show(title: entry.title, count: entry.count, symbol: entry.group.map(Self.symbol(forGroup:)) ?? "square.grid.2x2")
+            return cell
+        }
         let cell = tableView.makeView(withIdentifier: ChannelRow.identifier, owner: self) as? ChannelRow ?? ChannelRow()
         let channel = channels[row]
         cell.show(
@@ -458,11 +535,79 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     }
 }
 
+extension ChannelPanel {
+    static func symbol(forGroup group: String) -> String {
+        switch group.lowercased() {
+        case "news": return "newspaper"
+        case "movies": return "film"
+        case "music": return "music.note"
+        case "sports": return "sportscourt"
+        case "kids", "animation": return "teddybear"
+        case "entertainment", "comedy": return "theatermasks"
+        case "documentary", "science", "education": return "graduationcap"
+        case "religious": return "building.columns"
+        case "business": return "chart.line.uptrend.xyaxis"
+        case "lifestyle", "cooking", "travel": return "leaf"
+        case "weather": return "cloud.sun"
+        case "shop": return "bag"
+        case "auto": return "car"
+        case "family": return "figure.2.and.child.holdinghands"
+        case "legislative": return "building.2"
+        case "culture", "classic": return "theatermask.and.paintbrush"
+        case "outdoor": return "mountain.2"
+        case "series": return "rectangle.stack"
+        default: return "tv"
+        }
+    }
+}
+
+/// A category in the All tab's menu: icon, name, channel count, chevron.
+@MainActor
+private final class CategoryRow: NSTableCellView {
+    static let identifier = NSUserInterfaceItemIdentifier("CategoryRow")
+    private let icon = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let countLabel = NSTextField(labelWithString: "")
+
+    init() {
+        super.init(frame: .zero)
+        identifier = Self.identifier
+        icon.symbolConfiguration = .init(pointSize: 15, weight: .regular)
+        icon.contentTintColor = HUD.accent
+        titleLabel.font = .systemFont(ofSize: 13.5, weight: .medium)
+        countLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        countLabel.textColor = HUD.secondaryText
+        let chevron = NSImageView(image: NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil) ?? NSImage())
+        chevron.contentTintColor = HUD.secondaryText
+        let row = NSStackView(views: [icon, titleLabel, NSView(), countLabel, chevron])
+        row.spacing = 10
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            icon.widthAnchor.constraint(equalToConstant: 24),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            row.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func show(title: String, count: Int, symbol: String) {
+        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        titleLabel.stringValue = title
+        countLabel.stringValue = count.formatted()
+        setAccessibilityLabel("\(title), \(count) channels")
+    }
+}
+
 extension ChannelPanel: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let row = table.clickedRow
-        guard channels.indices.contains(row) else { return }
+        guard !isBrowsing, channels.indices.contains(row) else { return }
         let channel = channels[row]
         menu.addItem(ClosureMenuItem("Watch") { [weak self] in self?.play(row: row) })
         menu.addItem(

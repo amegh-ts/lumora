@@ -172,6 +172,12 @@ enum DebugMode {
                     }
                 }
             }
+            // LUMORA_PANEL_ALL=3 → at 3 s switch the Live TV panel to its All tab.
+            if let delay = environment["LUMORA_PANEL_ALL"].flatMap(Double.init) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    NSApp.windows.compactMap { $0.contentViewController as? PlayerViewController }.first?.channelPanel.debugSelectAllTab()
+                }
+            }
             // LUMORA_CROP="2:2.35" → at 2 s crop to 2.35:1 and reshape the window.
             if let entry = environment["LUMORA_CROP"] {
                 let parts = entry.split(separator: ":").compactMap { Double($0) }
