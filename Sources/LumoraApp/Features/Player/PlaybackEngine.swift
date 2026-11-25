@@ -1025,8 +1025,12 @@ final class PlaybackEngine: ObservableObject {
     /// Metal failure is detected from mpv's own error ("Error opening/initializing the selected
     /// video_out") rather than a timeout, so slow streams never trigger a false fallback.
     private func handleLog(_ message: mpv_event_log_message) {
-        guard renderer == .metal, !pendingOpenGLSwitch, let text = message.text else { return }
+        guard let text = message.text else { return }
         let line = String(cString: text)
+        // Kept for a crash report on the next launch (scrubbed of names and paths before sending).
+        let prefix = message.prefix.map { String(cString: $0) } ?? "mpv"
+        SessionLog.record("[\(prefix)] \(line)")
+        guard renderer == .metal, !pendingOpenGLSwitch else { return }
         if line.contains("selected video_out") || line.contains("suitable GPU context") {
             onRendererFailure?()
         }

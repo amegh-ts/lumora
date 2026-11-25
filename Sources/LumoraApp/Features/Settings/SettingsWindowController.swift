@@ -478,6 +478,10 @@ enum SettingsPanes {
                         control: Form.button("Show in Finder") {
                             reveal(AppPaths.logs)
                         }),
+                    Form.row(
+                        "Offer to report crashes",
+                        detail: "After a crash, Lumora asks whether to open a GitHub issue with the details. Nothing is sent unless you submit it.",
+                        control: Form.toggle({ CrashReporter.isEnabled }, { CrashReporter.isEnabled = $0 })),
                     Form.row("Library and caches", control: Form.button("Show in Finder") { reveal(AppPaths.applicationSupport) })
                 ]),
             Form.section(

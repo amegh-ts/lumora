@@ -55,6 +55,9 @@
 - Convert Media: drop a file, pick a format with a plain description, choose where to save, cancel, show the result in Finder.
 - Open URL fills in a link from the clipboard and accepts links typed without https://.
 
+## Crash reports
+- After a crash, Lumora offers on the next launch to open a pre-filled GitHub issue: Lumora and macOS versions, Mac model, renderer, crash reason and the crashed thread's stack, plus the last player messages. File names, titles, links and home-folder paths are removed, and nothing is sent unless you submit the issue. "Copy Report" is there for anyone without a GitHub account; the offer can be turned off in Settings › Advanced.
+
 ## Updates
 - Automatic, signed updates through Sparkle from GitHub Releases.
 
