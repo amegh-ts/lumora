@@ -97,6 +97,20 @@ enum DebugMode {
                         position: Double(parts[2]) ?? 100)
                 }
             }
+            // LUMORA_PIP="2:6:/path/frame.png" → PiP frame pipeline from 2 s to 6 s, last frame saved.
+            if let entry = environment["LUMORA_PIP"] {
+                let parts = entry.split(separator: ":", maxSplits: 2).map(String.init)
+                if parts.count >= 2, let begin = Double(parts[0]), let end = Double(parts[1]) {
+                    let player = { NSApp.windows.compactMap { $0.contentViewController as? PlayerViewController }.first }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + begin) {
+                        print("[debug] " + (player()?.debugPictureInPicture(start: true, frameFile: nil) ?? "no player"))
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + end) {
+                        let file = parts.count == 3 ? URL(fileURLWithPath: parts[2]) : nil
+                        print("[debug] " + (player()?.debugPictureInPicture(start: false, frameFile: file) ?? "no player"))
+                    }
+                }
+            }
             // LUMORA_CROP="2:2.35" → at 2 s crop to 2.35:1 and reshape the window.
             if let entry = environment["LUMORA_CROP"] {
                 let parts = entry.split(separator: ":").compactMap { Double($0) }

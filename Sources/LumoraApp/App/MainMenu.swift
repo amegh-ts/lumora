@@ -231,6 +231,7 @@ enum MainMenuBuilder {
         // AppKit's own action; DuplicateItemRemover drops the copy macOS may add.
         add(view, "Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control])
         add(view, "Mini Player", #selector(PlayerViewController.toggleMiniPlayer(_:)), "m", [.command, .option], symbol: "pip")
+        add(view, "Picture in Picture", #selector(PlayerViewController.togglePictureInPicture(_:)), "p", [.command, .option], symbol: "pip.enter")
         view.addItem(.separator())
         add(view, "Half Size", #selector(PlayerViewController.halfSize(_:)), "0")
         add(view, "Actual Size", #selector(PlayerViewController.actualSize(_:)), "1")
