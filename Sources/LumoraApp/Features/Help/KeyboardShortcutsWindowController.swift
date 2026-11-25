@@ -41,6 +41,17 @@ final class KeyboardShortcutsWindowController: NSWindowController, NSSearchField
                 Shortcut(keys: ["P"], action: "Show / hide playlist")
             ]),
         Group(
+            title: "Live TV", symbol: "tv",
+            shortcuts: [
+                Shortcut(keys: ["⇧⌘T"], action: "Show / hide channels"),
+                Shortcut(keys: ["⌘↑", "⌘↓"], action: "Channel up / down"),
+                Shortcut(keys: ["Pg Up", "Pg Dn"], action: "Channel up / down"),
+                Shortcut(keys: ["0–9"], action: "Type a channel number"),
+                Shortcut(keys: ["⌫"], action: "Previous channel"),
+                Shortcut(keys: ["⌘D"], action: "Add or remove favourite"),
+                Shortcut(keys: ["I"], action: "Channel info")
+            ]),
+        Group(
             title: "Audio", symbol: "speaker.wave.2",
             shortcuts: [
                 Shortcut(keys: ["↑", "↓"], action: "Volume up / down"),
@@ -76,7 +87,7 @@ final class KeyboardShortcutsWindowController: NSWindowController, NSSearchField
                 Shortcut(keys: ["⌘U"], action: "Open URL"),
                 Shortcut(keys: ["⌘N"], action: "New player window"),
                 Shortcut(keys: ["⇧⌘L"], action: "Library"),
-                Shortcut(keys: ["⇧⌘T"], action: "Channels (live TV)"),
+                Shortcut(keys: ["⇧⌘T"], action: "Live TV panel"),
                 Shortcut(keys: ["⌘,"], action: "Settings"),
                 Shortcut(keys: ["⌘/"], action: "Keyboard shortcuts")
             ]),

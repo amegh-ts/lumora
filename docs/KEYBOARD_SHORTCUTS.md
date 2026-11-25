@@ -19,6 +19,16 @@ Every shortcut is also listed next to its command in the menu bar.
 | ⌘. | Stop |
 | ⌘J | Go to time |
 
+## Live TV
+| Key | Action |
+|---|---|
+| ⇧⌘T | Show / hide the channel panel |
+| ⌘↑ / ⌘↓, Page Up / Page Down | Channel up / down |
+| 0–9 | Type a channel number |
+| ⌫ | Previous channel |
+| ⌘D | Add or remove the channel from favourites |
+| I | Channel info |
+
 ## Audio
 | Key | Action |
 |---|---|
@@ -49,7 +59,7 @@ Every shortcut is also listed next to its command in the menu bar.
 | ⌥⌘T | Keep on top |
 | P | Show / hide playlist |
 | ⇧⌘L | Library |
-| ⇧⌘T | Channels (live TV) |
+| ⇧⌘T | Live TV panel |
 
 ## App
 | Key | Action |

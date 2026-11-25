@@ -51,47 +51,52 @@ enum DebugMode {
                 NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0.5)
                 return
             }
-            // LUMORA_CHANNELS_TEST="url|/path/shot.png" → add a channel list (not saved), show
-            // Channels, then save a picture of the window and print counts.
+            // LUMORA_CHANNELS_TEST="url|/path/shot.png" → add a channel list (not saved), open the Live TV
+            // panel, print counts and save a picture of the player window.
+            // LUMORA_CHANNELS_PLAY="name" tunes to that channel; LUMORA_CHANNELS_STEPS=3 then presses
+            // channel up three times, 6 s apart.
             if let entry = environment["LUMORA_CHANNELS_TEST"] {
                 let parts = entry.split(separator: "|").map(String.init)
                 if let url = URL(string: parts[0]) {
                     ChannelStore.shared.loadIfNeeded()
-                    let id = ChannelStore.shared.addSource(url: url, name: "iptv-org")
-                    ChannelsWindowController.shared.show(source: id)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
+                    ChannelStore.shared.addSource(url: url, name: "iptv-org")
+                    let player = { NSApp.windows.compactMap { $0.contentViewController as? PlayerViewController }.first }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { player()?.setChannelPanel(visible: true) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
                         let store = ChannelStore.shared
-                        let channels = store.channelsBySource[id] ?? []
-                        let groups = Set(channels.map(\.group)).count
-                        let withAgent = channels.filter { $0.userAgent != nil || $0.referrer != nil }.count
-                        print(
-                            "[debug] channels=\(channels.count) groups=\(groups) headers=\(withAgent) countries=\(Set(channels.compactMap(\.country)).count) error=\(store.sources.first?.lastError ?? "-")"
-                        )
-                        if parts.count > 1, let window = ChannelsWindowController.shared.window, let frameView = window.contentView?.superview,
-                            let rep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds)
+                        print("[debug] channels=\(store.all.count) numbered=\(store.all.compactMap { store.number(of: $0) }.count)")
+                        if let name = environment["LUMORA_CHANNELS_PLAY"], let channel = store.all.first(where: { $0.name.hasPrefix(name) }),
+                            let player = player()
                         {
-                            frameView.cacheDisplay(in: frameView.bounds, to: rep)
-                            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: parts[1]))
+                            player.liveTV.ring = store.all
+                            player.tune(to: channel)
+                            print("[debug] tuned \(channel.name) number=\(store.number(of: channel) ?? -1)")
                         }
-                        // LUMORA_CHANNELS_PLAY="plain" or "headers": play such a channel and report.
-                        if let kind = environment["LUMORA_CHANNELS_PLAY"] {
-                            let pick = channels.first { $0.name.hasPrefix(kind) }
-                            if let pick {
-                                print("[debug] playing \(pick.name) ua=\(pick.userAgent ?? "-") ref=\(pick.referrer ?? "-")")
-                                (NSApp.delegate as? AppDelegate)?.playChannels([pick.playbackItem], startAt: 0)
+                        let steps = Int(environment["LUMORA_CHANNELS_STEPS"] ?? "0") ?? 0
+                        for step in 0..<steps {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 6 * Double(step + 1)) {
+                                guard let player = player() else { return }
+                                player.stepChannel(1)
+                                print("[debug] step \(step + 1) → \(player.liveTV.current?.name ?? "-") skipped=\(player.liveTV.skipped)")
                             }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
-                                if let player = NSApp.windows.compactMap({ $0.contentViewController as? PlayerViewController }).first {
-                                    let engine = player.engine
-                                    print(
-                                        "[debug] channel playing=\(engine.isPlaying) live=\(engine.isLive) size=\(engine.videoSize) status=\(engine.statusMessage) t=\(engine.currentTime)"
-                                    )
+                        }
+                        let finish = 7 + 6 * Double(steps)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + finish) {
+                            if let player = player() {
+                                let engine = player.engine
+                                print(
+                                    "[debug] now \(player.liveTV.current?.name ?? "-") playing=\(engine.isPlaying) live=\(engine.isLive) unavailable=\(store.unavailable.count) recent=\(store.recent.count)"
+                                )
+                                if parts.count > 1, let window = player.view.window, let frameView = window.contentView?.superview,
+                                    let rep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds)
+                                {
+                                    player.showChannelInfo()
+                                    frameView.cacheDisplay(in: frameView.bounds, to: rep)
+                                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: parts[1]))
                                 }
-                                NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0.5)
                             }
-                            return
+                            NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0.5)
                         }
-                        NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0.5)
                     }
                 }
                 return

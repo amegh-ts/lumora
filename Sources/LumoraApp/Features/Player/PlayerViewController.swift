@@ -11,11 +11,19 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
     private let rootView = PlayerRootView(frame: NSRect(x: 0, y: 0, width: 1120, height: 700))
     private let videoView: VideoView
-    private let controls = ControlsOverlay(frame: .zero)
+    let controls = ControlsOverlay(frame: .zero)
     private let titleBar = TitleOverlayView(frame: .zero)
     private let emptyState = EmptyStateView(frame: .zero)
     private let audioArtwork = AudioArtworkView(frame: .zero)
     private let miniControls = MiniControlsView(frame: .zero)
+    let channelPanel = ChannelPanel()
+    let channelBanner = ChannelBanner(frame: .zero)
+    var liveTV = LiveTVState()
+    var channelDigits = ""
+    var channelDigitWork: DispatchWorkItem?
+    var channelSkipWork: DispatchWorkItem?
+    var controlsLeadingForPanel: NSLayoutConstraint!
+    var bannerLeadingForPanel: NSLayoutConstraint!
     private lazy var pictureInPicture = makePictureInPicture()
     private var hasPictureInPicture = false
     private let pipPlaceholder = NSStackView()
@@ -106,7 +114,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     }
 
     private func installViews() {
-        for subview in [videoView, audioArtwork, emptyState, titleBar, spinner, loadingLabel, osd, sidebar, controls, miniControls, thumbnail] as [NSView] {
+        for subview in [
+            videoView, audioArtwork, emptyState, titleBar, spinner, loadingLabel, osd, sidebar, channelPanel, channelBanner, controls, miniControls, thumbnail
+        ] as [NSView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(subview)
         }
@@ -127,6 +137,12 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         let centered = controls.centerXAnchor.constraint(equalTo: rootView.centerXAnchor)
         centered.priority = NSLayoutConstraint.Priority(rawValue: 450)
         thumbnailX = thumbnail.centerXAnchor.constraint(equalTo: rootView.leadingAnchor, constant: 0)
+        controlsLeadingForPanel = controls.leadingAnchor.constraint(greaterThanOrEqualTo: channelPanel.trailingAnchor, constant: 12)
+        bannerLeadingForPanel = channelBanner.leadingAnchor.constraint(equalTo: channelPanel.trailingAnchor, constant: 14)
+        let bannerLeading = channelBanner.leadingAnchor.constraint(equalTo: rootView.leadingAnchor, constant: 18)
+        bannerLeading.priority = .defaultHigh
+        let panelBottom = channelPanel.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -10)
+        panelBottom.priority = NSLayoutConstraint.Priority(450)
         // The sidebar's content must not set a minimum window height (the mini player is small).
         let sidebarBottom = sidebar.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -10)
         sidebarBottom.priority = NSLayoutConstraint.Priority(450)
@@ -179,10 +195,20 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             sidebar.widthAnchor.constraint(equalToConstant: 290),
 
             thumbnail.bottomAnchor.constraint(equalTo: controls.topAnchor, constant: -6),
+
+            channelPanel.leadingAnchor.constraint(equalTo: rootView.leadingAnchor, constant: 10),
+            channelPanel.topAnchor.constraint(equalTo: rootView.topAnchor, constant: 40),
+            panelBottom,
+            channelPanel.widthAnchor.constraint(equalToConstant: 360),
+
+            bannerLeading,
+            channelBanner.bottomAnchor.constraint(equalTo: controls.topAnchor, constant: -12),
+            channelBanner.trailingAnchor.constraint(lessThanOrEqualTo: rootView.trailingAnchor, constant: -18),
             thumbnailX
         ])
 
         controls.onAction = { [weak self] action in self?.handle(action) }
+        installLiveTV()
         controls.menuProvider = { [weak self] kind in self?.menu(for: kind) ?? NSMenu() }
         let pipIcon = NSImageView(image: NSImage(systemSymbolName: "pip", accessibilityDescription: nil) ?? NSImage())
         pipIcon.symbolConfiguration = .init(pointSize: 44, weight: .light)
@@ -209,6 +235,13 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         miniControls.onExpand = { [weak self] in self?.toggleMiniPlayer(nil) }
         miniControls.onClose = { [weak self] in self?.view.window?.performClose(nil) }
         emptyState.onOpenFile = { [weak self] in self?.chooseFiles() }
+        emptyState.onLiveTV = { [weak self] in self?.setChannelPanel(visible: true) }
+        emptyState.onContinueChannel = { [weak self] in
+            guard let self, let channel = ChannelStore.shared.lastWatched else { return }
+            self.liveTV.ring = ChannelStore.shared.recentChannels
+            self.liveTV.ringTitle = "Recent"
+            self.tune(to: channel)
+        }
         emptyState.onOpenURL = { [weak self] in self?.windowController?.promptForURL() }
         emptyState.onOpenRecent = { [weak self] url in self?.windowController?.open([url]) }
     }
@@ -376,8 +409,13 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         }
         engine.onLoad = { [weak self] item in
             guard let self else { return }
-            if item.kind == .channel {
-                ChannelStore.shared.markWatched(item.url)
+            if item.kind != .channel {
+                self.liveTV.direction = 0
+                self.controls.setChannelMode(false)
+                self.channelBanner.hide()
+                self.channelPanel.playingKey = nil
+            } else {
+                self.updateChannelControls()
             }
             self.lastSavedTime = 0
             self.watchedMarked = false
@@ -391,6 +429,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         }
         engine.onFileLoaded = { [weak self] item in
             guard let self else { return }
+            if item.kind == .channel {
+                self.channelDidLoad()
+            }
             self.applySettings()
             NowPlayingService.shared.playerDidChange(self)
             if !self.pendingSubtitles.isEmpty {
@@ -408,12 +449,12 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             self.emptyState.setError(message)
             self.pendingSubtitles = []
             self.refreshEmptyState()
-            // A dead channel stays put: skipping would race through thousands of channels.
-            if self.playlist.current?.kind == .channel {
+            // A dead channel: say so; channel up/down may move on after a countdown.
+            if self.liveTV.current != nil, self.engine.currentItem?.kind == .channel {
                 self.emptyState.setError(
-                    "“\(self.playlist.current?.title ?? "This channel")” isn't available right now. Free channels often go offline or are blocked in some countries. Try another one with ⌘→ or the Channels window."
+                    "“\(self.liveTV.current?.name ?? "This channel")” isn't available right now. Free channels often go offline or are blocked in some countries. Try another with ⌘↑ / ⌘↓ or the Live TV panel (⇧⌘T)."
                 )
-                self.osd.show("Channel unavailable", symbol: "antenna.radiowaves.left.and.right.slash", duration: 2.5)
+                self.channelDidFail()
                 return
             }
             let hasNext = (self.playlist.currentIndex ?? 0) + 1 < self.playlist.items.count
@@ -579,6 +620,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         emptyState.isHidden = !showEmpty
         if showEmpty {
             emptyState.setRecent(library.continueWatching(limit: 4).filter { $0.url.isFileURL })
+            emptyState.setLastChannel(ChannelStore.shared.lastWatched?.name)
             titleBar.title = ""
             view.window?.title = "Lumora"
         }
@@ -876,6 +918,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             toggleFullscreen(self)
         case .togglePlaylist:
             togglePlaylist()
+        case .toggleChannels:
+            toggleChannelPanel(nil)
         }
     }
 
@@ -1221,6 +1265,32 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         guard modifiers.isEmpty else { return false }
         let big = event.modifierFlags.contains(.option)
         let fine = event.modifierFlags.contains(.shift)
+        // Live TV: number keys tune like a remote; Page Up/Down change channel; ⌫ goes back;
+        // I shows the channel banner.
+        if let character = event.charactersIgnoringModifiers?.first, character.isASCII, character.isNumber,
+            !ChannelStore.shared.all.isEmpty
+        {
+            enterChannelDigit(character)
+            return true
+        }
+        if isWatchingChannel {
+            var handled = true
+            switch Int(event.keyCode) {
+            case 116: stepChannel(1)
+            case 121: stepChannel(-1)
+            case 51: previousChannel(nil)
+            default:
+                if event.charactersIgnoringModifiers?.lowercased() == "i" {
+                    showChannelInfo()
+                } else {
+                    handled = false
+                }
+            }
+            if handled {
+                scheduleHide()
+                return true
+            }
+        }
         switch Int(event.keyCode) {
         case 123:
             engine.skip(big ? -60 : fine ? -3 : -10)
@@ -1488,6 +1558,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             window.toggleFullScreen(nil)
         }
         guard let screen = window.screen ?? NSScreen.main else { return }
+        setChannelPanel(visible: false)
         miniPlayerRestoreFrame = window.frame
         let size = orientedVideoSize ?? CGSize(width: 16, height: 9)
         let aspect = size.width / size.height
@@ -1522,6 +1593,16 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             let active = hasPictureInPicture && pictureInPicture.isActive
             menuItem.title = active ? "Exit Picture in Picture" : "Picture in Picture"
             return active || (engine.hasMedia && engine.hasPicture)
+        case #selector(toggleChannelPanel(_:)):
+            menuItem.title = isChannelPanelVisible ? "Hide Live TV" : "Live TV"
+            return miniPlayerRestoreFrame == nil
+        case #selector(channelUp(_:)), #selector(channelDown(_:)), #selector(toggleCurrentFavourite(_:)), #selector(showChannelInfo(_:)):
+            if menuItem.action == #selector(toggleCurrentFavourite(_:)), let channel = liveTV.current {
+                menuItem.title = ChannelStore.shared.isFavourite(channel) ? "Remove Channel from Favourites" : "Add Channel to Favourites"
+            }
+            return isWatchingChannel
+        case #selector(previousChannel(_:)):
+            return isWatchingChannel && liveTV.previous != nil
         case #selector(toggleVolumeBoost(_:)):
             menuItem.state = settings.volumeBoost ? .on : .off
             return true

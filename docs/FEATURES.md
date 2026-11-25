@@ -55,11 +55,13 @@
 - Convert Media: drop a file, pick a format with a plain description, choose where to save, cancel, show the result in Finder.
 - Open URL fills in a link from the clipboard and accepts links typed without https://.
 
-## Live TV (Channels)
-- Window › Channels (⇧⌘T): add M3U channel lists by link or file (iptv-org presets: 11,000+ free channels, or by country, news, movies, music, sports), or paste a list link into Open URL.
-- Categories with counts, country filter, search, channel logos, favourites and recently watched; lists are kept on this Mac and refreshed daily.
-- Double-click to watch; ⌘← / ⌘→ switch channels. Per-channel browser identity and referrer (#EXTVLCOPT) are sent. An unavailable channel says so instead of skipping ahead.
-- Downloaded lists can only point at network streams. TV guide, IPTV logins and internet radio are planned (#45).
+## Live TV
+- Live TV lives in the player: a channel panel (⇧⌘T, the TV button or Window › Live TV) with Favourites, Recent and All, category and country filters, search, channel numbers, logos and stars. The playing channel is highlighted.
+- Add M3U lists by link or file (iptv-org presets: 11,000+ free channels, or by country, news, movies, music, sports), or paste a list link into Open URL; lists are kept on this Mac and refreshed daily.
+- Change channels with the control bar's channel up/down buttons, ⌘↑ / ⌘↓, Page Up / Page Down, by typing a channel number, or ⌫ for the previous channel. Channel up/down stays within the tab, category, country or search you picked from.
+- A TV-style banner shows logo, number, name, category, country and a favourite star on every switch; ⌘D adds the current channel to favourites.
+- Dead channels: picked directly, Lumora says so and stays; reached by channel up/down, it counts down and moves on (Stay Here cancels). Failed channels are dimmed for the session.
+- Favourites, recents and channel numbers survive list updates. Watching TV never replaces your playlist of files. Per-channel browser identity and referrer (#EXTVLCOPT) are sent. TV guide, IPTV logins and internet radio are planned (#45).
 
 ## Crash reports
 - After a crash, Lumora offers on the next launch to open a pre-filled GitHub issue: Lumora and macOS versions, Mac model, renderer, crash reason and the crashed thread's stack, plus the last player messages. File names, titles, links and home-folder paths are removed, and nothing is sent unless you submit the issue. "Copy Report" is there for anyone without a GitHub account; the offer can be turned off in Settings › Advanced.

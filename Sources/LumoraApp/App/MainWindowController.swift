@@ -257,14 +257,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         return url
     }
 
-    func playChannels(_ items: [PlaybackItem], startAt index: Int) {
-        guard items.indices.contains(index) else { return }
+    func showLiveTV(addList: Bool) {
         showWindow(nil)
-        playerViewController.saveProgress(force: true)
-        playlist.clear()
-        playlist.add(items)
-        playlist.select(at: index)
-        playCurrent()
+        playerViewController.setChannelPanel(visible: true)
+        if addList {
+            playerViewController.channelPanel.addList(nil)
+        }
     }
 
     /// A single .m3u link: a channel list goes to Channels, a stream playlist plays here.
@@ -275,9 +273,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             guard let self else { return }
             if case .success(let channels) = result, channels.count > 1 {
                 DebugTimeline.log("channel list \(channels.count) channels")
-                let id = ChannelStore.shared.addSource(url: url, channels: channels)
-                ChannelsWindowController.shared.show(source: id)
-                AppDelegate.activateApp()
+                ChannelStore.shared.addSource(url: url, channels: channels)
+                // Stay in the player: the Live TV panel opens with the new channels.
+                self.playerViewController.setChannelPanel(visible: true)
+                self.playerViewController.osd.show(
+                    "Added \(ChannelStore.defaultName(for: url)) · \(channels.count.formatted()) channels", symbol: "tv", duration: 2.5)
                 return
             }
             self.playlist.add([PlaybackItem(url: url)])
@@ -298,6 +298,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func playNext(auto: Bool) {
+        // Watching TV, "next" means channel up (control bar, N, media keys, menu).
+        if engine.currentItem?.kind == .channel {
+            if !auto {
+                playerViewController.stepChannel(1)
+            }
+            return
+        }
         guard playlist.next(auto: auto) != nil else {
             if auto {
                 engine.pause()
@@ -308,6 +315,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func playPrevious() {
+        if engine.currentItem?.kind == .channel {
+            playerViewController.stepChannel(-1)
+            return
+        }
         if engine.currentTime > 5 {
             engine.seek(to: 0)
             return
