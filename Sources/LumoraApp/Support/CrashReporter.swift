@@ -119,7 +119,14 @@ enum CrashReporter {
         let appVersion = (version?.isEmpty == false ? version : info["CFBundleShortVersionString"] as? String) ?? "dev"
         let appBuild = (build?.isEmpty == false ? build : info["CFBundleVersion"] as? String) ?? "-"
         let renderer = SettingsStore.shared.renderer.title
-        let mpvErrors = SessionLog.recentLines()
+        // Only messages from shortly before the crash; the log may belong to a later, unrelated run.
+        let crashTime = (header["timestamp"] as? String).flatMap(Self.parseCrashTime)
+        let mpvErrors = SessionLog.recentLines().filter { line in
+            guard let crashTime, let stamp = line.split(separator: " ").first,
+                let time = ISO8601DateFormatter().date(from: String(stamp))
+            else { return false }
+            return time <= crashTime.addingTimeInterval(5) && time >= crashTime.addingTimeInterval(-600)
+        }
 
         var markdown = """
             **Lumora** \(appVersion) (build \(appBuild))
@@ -139,6 +146,17 @@ enum CrashReporter {
         markdown += "\n**What were you doing when it crashed?**\n\n"
         markdown += "<!-- Sent from Lumora's crash dialog. File names, titles and links were removed. Incident \(header["incident_id"] as? String ?? "?") -->\n"
         return Report(title: "Crash: \(scrub(headline))", body: scrub(markdown), fileURL: url)
+    }
+
+    /// "2026-11-25 09:17:17.00 +0530" from a macOS crash report header.
+    static func parseCrashTime(_ text: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        for format in ["yyyy-MM-dd HH:mm:ss.SS Z", "yyyy-MM-dd HH:mm:ss Z"] {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: text) { return date }
+        }
+        return nil
     }
 
     /// Removes anything that could identify the user or what they watch: home folders, file
