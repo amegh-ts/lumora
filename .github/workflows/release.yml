@@ -20,7 +20,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -41,7 +41,7 @@ jobs:
         run: brew install pkg-config meson ninja dav1d libass libplacebo luajit uchardet little-cms2 libbluray zimg molten-vk vulkan-loader vulkan-headers
 
       - name: Restore LGPL library cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             .build/deps/prefix
@@ -85,7 +85,7 @@ jobs:
 
       - name: Upload DMG (build only)
         if: steps.version.outputs.publish != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Lumora-dmg
           path: dist/*.dmg
