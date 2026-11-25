@@ -47,9 +47,11 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     private let spinner = NSProgressIndicator()
     private var channels: [Channel] = []
     /// All tab with no category, country or search: a short category menu instead of 11,000 rows.
-    private var browseRows: [(title: String, group: String?, count: Int)] = []
     private var showsAllChannels = false
-    private var isBrowsing: Bool { !browseRows.isEmpty }
+    private var isBrowsing = false
+    private let browseScroll = NSScrollView()
+    private let browseContent = BrowseFlippedView()
+    private let filters = NSStackView()
     private let backButton = NSButton(title: "‹ Categories", target: nil, action: nil)
     private var categories: [String] = []
     private var countries: [String] = []
@@ -121,7 +123,8 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         }
         categoryPopup.setAccessibilityLabel("Category")
         countryPopup.setAccessibilityLabel("Country")
-        let filters = NSStackView(views: [categoryPopup, countryPopup])
+        filters.addArrangedSubview(categoryPopup)
+        filters.addArrangedSubview(countryPopup)
         filters.distribution = .fillEqually
         filters.spacing = 6
 
@@ -180,9 +183,27 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         placeholder.orientation = .vertical
         placeholder.spacing = 10
 
+        browseScroll.documentView = browseContent
+        browseScroll.hasVerticalScroller = true
+        browseScroll.autohidesScrollers = true
+        browseScroll.drawsBackground = false
+        browseScroll.isHidden = true
+        browseContent.translatesAutoresizingMaskIntoConstraints = false
+        browseContent.widthAnchor.constraint(equalTo: browseScroll.contentView.widthAnchor).isActive = true
+        let lists = NSView()
+        for view in [scroll, browseScroll] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            lists.addSubview(view)
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: lists.leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: lists.trailingAnchor),
+                view.topAnchor.constraint(equalTo: lists.topAnchor),
+                view.bottomAnchor.constraint(equalTo: lists.bottomAnchor)
+            ])
+        }
         let scopeRow = NSStackView(views: [backButton, scopeLabel])
         scopeRow.spacing = 6
-        let stack = NSStackView(views: [header, tabs, searchField, filters, scopeRow, scroll])
+        let stack = NSStackView(views: [header, tabs, searchField, filters, scopeRow, lists])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
@@ -191,7 +212,7 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         placeholder.translatesAutoresizingMaskIntoConstraints = false
         panel.content.addSubview(stack)
         panel.content.addSubview(placeholder)
-        for view in [header, tabs, searchField, filters, scopeRow, scroll] {
+        for view in [header, tabs, searchField, filters, scopeRow, lists] {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
         NSLayoutConstraint.activate([
@@ -199,9 +220,9 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
             stack.trailingAnchor.constraint(equalTo: panel.content.trailingAnchor, constant: -12),
             stack.topAnchor.constraint(equalTo: panel.content.topAnchor, constant: 12),
             stack.bottomAnchor.constraint(equalTo: panel.content.bottomAnchor, constant: -8),
-            placeholder.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
-            placeholder.centerYAnchor.constraint(equalTo: scroll.centerYAnchor, constant: -20),
-            placeholder.widthAnchor.constraint(lessThanOrEqualTo: scroll.widthAnchor, constant: -24)
+            placeholder.centerXAnchor.constraint(equalTo: lists.centerXAnchor),
+            placeholder.centerYAnchor.constraint(equalTo: lists.centerYAnchor, constant: -20),
+            placeholder.widthAnchor.constraint(lessThanOrEqualTo: lists.widthAnchor, constant: -24)
         ])
 
         store.$all.combineLatest(store.$favourites, store.$recent, store.$unavailable)
@@ -280,14 +301,15 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         let query = searchField.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
         let number = Int(query)
         let browsing = tab == .all && category == nil && country == nil && query.isEmpty && !showsAllChannels
-        if browsing {
-            browseRows =
-                [("All Channels", nil, base.count)]
-                + categories.map { (title: $0, group: Optional($0), count: groupCounts[$0] ?? 0) }
-        } else {
-            browseRows = []
+        isBrowsing = browsing && !base.isEmpty
+        table.isHidden = isBrowsing
+        browseScroll.isHidden = !isBrowsing
+        // The tiles do what the two filter boxes do; show the boxes once inside a list.
+        filters.isHidden = isBrowsing
+        if isBrowsing {
+            rebuildBrowse(base: base, groupCounts: groupCounts)
         }
-        backButton.isHidden = !(tab == .all && !browsing && (category != nil || showsAllChannels))
+        backButton.isHidden = !(tab == .all && !browsing && query.isEmpty && (category != nil || country != nil || showsAllChannels))
         channels =
             browsing
             ? []
@@ -302,7 +324,7 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         revealPlaying(scroll: false)
         scopeLabel.stringValue =
             browsing
-            ? "Choose a category, or search all \(base.count.formatted()) channels"
+            ? "\(base.count.formatted()) channels · pick a category or country, or search"
             : scopeTitle + " · \(channels.count.formatted()) channel\(channels.count == 1 ? "" : "s")"
         updatePlaceholder()
         rebuildListsMenu()
@@ -426,6 +448,7 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     @objc private func backToCategories(_ sender: Any?) {
         showsAllChannels = false
         categoryPopup.select(index: 0, notify: false)
+        countryPopup.select(index: 0, notify: false)
         reload()
         table.scrollRowToVisible(0)
     }
@@ -472,28 +495,148 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     }
 
     @objc private func rowClicked(_ sender: NSTableView) {
-        if isBrowsing {
-            openCategory(row: sender.clickedRow)
-        } else {
-            play(row: sender.clickedRow)
-        }
+        play(row: sender.clickedRow)
     }
 
-    private func openCategory(row: Int) {
-        guard browseRows.indices.contains(row) else { return }
-        if let group = browseRows[row].group, let index = categories.firstIndex(of: group) {
-            categoryPopup.select(index: index + 1, notify: false)
-        } else {
-            showsAllChannels = true
+    // MARK: Browse tiles
+
+    private func rebuildBrowse(base: [Channel], groupCounts: [String: Int]) {
+        browseContent.subviews.forEach { $0.removeFromSuperview() }
+        var sections: [NSView] = []
+
+        let countryCounts = Dictionary(grouping: base.compactMap(\.country), by: { $0 }).mapValues(\.count)
+        let home = Locale.current.region?.identifier.lowercased()
+        var top: [BrowseTile] = [
+            BrowseTile(symbol: "square.grid.2x2", title: "All Channels", count: base.count) { [weak self] in
+                self?.showsAllChannels = true
+                self?.enterList()
+            }
+        ]
+        if let home, let count = countryCounts[home] {
+            top.append(
+                BrowseTile(emoji: Self.flag(home), title: Self.countryName(home), count: count) { [weak self] in self?.openCountry(home) })
         }
+        sections.append(Self.grid(top))
+
+        let groups = groupCounts.keys.sorted { lhs, rhs in
+            if (lhs == "Other") != (rhs == "Other") { return rhs == "Other" }
+            return (groupCounts[lhs] ?? 0, rhs) > (groupCounts[rhs] ?? 0, lhs)
+        }
+        sections.append(Self.sectionLabel("Categories"))
+        sections.append(
+            Self.grid(
+                groups.map { group in
+                    BrowseTile(symbol: Self.symbol(forGroup: group), title: group, count: groupCounts[group] ?? 0) { [weak self] in
+                        self?.openCategory(group)
+                    }
+                }))
+
+        let countries = countryCounts.sorted { ($0.value, $1.key) > ($1.value, $0.key) }.prefix(12).map(\.key)
+        if !countries.isEmpty {
+            sections.append(Self.sectionLabel("Countries"))
+            var tiles = countries.map { code in
+                BrowseTile(emoji: Self.flag(code), title: Self.countryName(code), count: countryCounts[code] ?? 0) { [weak self] in
+                    self?.openCountry(code)
+                }
+            }
+            if countryCounts.count > countries.count {
+                tiles.append(
+                    BrowseTile(symbol: "globe", title: "More countries…", count: countryCounts.count) { [weak self] in
+                        guard let self else { return }
+                        self.filters.isHidden = false
+                        self.window?.makeFirstResponder(self.countryPopup)
+                    })
+            }
+            sections.append(Self.grid(tiles))
+        }
+
+        let stack = NSStackView(views: sections)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        browseContent.addSubview(stack)
+        for section in sections {
+            section.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: browseContent.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: browseContent.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: browseContent.topAnchor, constant: 2),
+            stack.bottomAnchor.constraint(equalTo: browseContent.bottomAnchor, constant: -8)
+        ])
+    }
+
+    private func openCategory(_ group: String) {
+        guard let index = categories.firstIndex(of: group) else { return }
+        categoryPopup.select(index: index + 1, notify: false)
+        enterList()
+    }
+
+    private func openCountry(_ code: String) {
+        guard let index = countries.firstIndex(of: code) else { return }
+        countryPopup.select(index: index + 1, notify: false)
+        enterList()
+    }
+
+    private func enterList() {
         reload()
         table.scrollRowToVisible(0)
         revealPlaying()
     }
 
+    private static func grid(_ tiles: [BrowseTile]) -> NSView {
+        let grid = NSGridView(numberOfColumns: 2, rows: 0)
+        grid.rowSpacing = 6
+        grid.columnSpacing = 6
+        var index = 0
+        while index < tiles.count {
+            let second: NSView = index + 1 < tiles.count ? tiles[index + 1] : NSView()
+            grid.addRow(with: [tiles[index], second])
+            index += 2
+        }
+        for column in 0..<2 {
+            grid.column(at: column).xPlacement = .fill
+        }
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        // Equal columns.
+        if grid.numberOfRows > 0 {
+            let first = grid.cell(atColumnIndex: 0, rowIndex: 0).contentView
+            let other = grid.cell(atColumnIndex: 1, rowIndex: 0).contentView
+            if let first, let other {
+                first.widthAnchor.constraint(equalTo: other.widthAnchor).isActive = true
+            }
+        }
+        return grid
+    }
+
+    private static func sectionLabel(_ text: String) -> NSView {
+        let label = NSTextField(labelWithString: text.uppercased())
+        label.font = .systemFont(ofSize: 10.5, weight: .semibold)
+        label.textColor = HUD.secondaryText
+        let holder = NSView()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        holder.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: 2),
+            label.topAnchor.constraint(equalTo: holder.topAnchor, constant: 8),
+            label.bottomAnchor.constraint(equalTo: holder.bottomAnchor)
+        ])
+        return holder
+    }
+
+    static func flag(_ code: String) -> String {
+        guard code.count == 2 else { return "🌐" }
+        return code.uppercased().unicodeScalars.compactMap { UnicodeScalar(127_397 + $0.value) }.map(String.init).joined()
+    }
+
+    static func countryName(_ code: String) -> String {
+        Locale.current.localizedString(forRegionCode: code.uppercased()) ?? code.uppercased()
+    }
+
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 36 || event.keyCode == 76, table.selectedRow >= 0 {
-            if isBrowsing { openCategory(row: table.selectedRow) } else { play(row: table.selectedRow) }
+            play(row: table.selectedRow)
         } else if event.keyCode == 53 {
             closePanel(nil)
         } else {
@@ -512,19 +655,13 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
 
     // MARK: Table
 
-    func numberOfRows(in tableView: NSTableView) -> Int { isBrowsing ? browseRows.count : channels.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { isBrowsing ? 0 : channels.count }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
         tableView.makeView(withIdentifier: ChannelRowBackground.identifier, owner: self) as? ChannelRowBackground ?? ChannelRowBackground()
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        if isBrowsing {
-            let entry = browseRows[row]
-            let cell = tableView.makeView(withIdentifier: CategoryRow.identifier, owner: self) as? CategoryRow ?? CategoryRow()
-            cell.show(title: entry.title, count: entry.count, symbol: entry.group.map(Self.symbol(forGroup:)) ?? "square.grid.2x2")
-            return cell
-        }
         let cell = tableView.makeView(withIdentifier: ChannelRow.identifier, owner: self) as? ChannelRow ?? ChannelRow()
         let channel = channels[row]
         cell.show(
@@ -561,53 +698,104 @@ extension ChannelPanel {
     }
 }
 
-/// A category in the All tab's menu: icon, name, channel count, chevron.
+/// A browse tile: icon or flag, name and channel count; highlights on hover.
 @MainActor
-private final class CategoryRow: NSTableCellView {
-    static let identifier = NSUserInterfaceItemIdentifier("CategoryRow")
-    private let icon = NSImageView()
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let countLabel = NSTextField(labelWithString: "")
+private final class BrowseTile: NSView {
+    private let action: () -> Void
+    private var hovering = false {
+        didSet { layer?.backgroundColor = NSColor.white.withAlphaComponent(hovering ? 0.14 : 0.07).cgColor }
+    }
+    private var tracking: NSTrackingArea?
 
-    init() {
-        super.init(frame: .zero)
-        identifier = Self.identifier
-        icon.symbolConfiguration = .init(pointSize: 15, weight: .regular)
+    convenience init(symbol: String, title: String, count: Int, action: @escaping () -> Void) {
+        let icon = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
+        icon.symbolConfiguration = .init(pointSize: 14, weight: .medium)
         icon.contentTintColor = HUD.accent
-        titleLabel.font = .systemFont(ofSize: 13.5, weight: .medium)
-        countLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        self.init(icon: icon, title: title, count: count, action: action)
+    }
+
+    convenience init(emoji: String, title: String, count: Int, action: @escaping () -> Void) {
+        let icon = NSTextField(labelWithString: emoji)
+        icon.font = .systemFont(ofSize: 16)
+        self.init(icon: icon, title: title, count: count, action: action)
+    }
+
+    private init(icon: NSView, title: String, count: Int, action: @escaping () -> Void) {
+        self.action = action
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 9
+        layer?.backgroundColor = NSColor.white.withAlphaComponent(0.07).cgColor
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let countLabel = NSTextField(labelWithString: count.formatted())
+        countLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         countLabel.textColor = HUD.secondaryText
-        let chevron = NSImageView(image: NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil) ?? NSImage())
-        chevron.contentTintColor = HUD.secondaryText
-        let row = NSStackView(views: [icon, titleLabel, NSView(), countLabel, chevron])
-        row.spacing = 10
+        let text = NSStackView(views: [titleLabel, countLabel])
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = 0
+        let row = NSStackView(views: [icon, text])
+        row.spacing = 8
+        row.alignment = .centerY
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
         NSLayoutConstraint.activate([
-            icon.widthAnchor.constraint(equalToConstant: 24),
+            heightAnchor.constraint(equalToConstant: 46),
+            icon.widthAnchor.constraint(equalToConstant: 22),
             row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            row.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
             row.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel("\(title), \(count) channels")
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func show(title: String, count: Int, symbol: String) {
-        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        titleLabel.stringValue = title
-        countLabel.stringValue = count.formatted()
-        setAccessibilityLabel("\(title), \(count) channels")
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking {
+            removeTrackingArea(tracking)
+        }
+        let area = NSTrackingArea(rect: bounds, options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        tracking = area
     }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+    override func mouseDown(with event: NSEvent) {}
+
+    override func mouseUp(with event: NSEvent) {
+        if bounds.contains(convert(event.locationInWindow, from: nil)) {
+            action()
+        }
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        action()
+        return true
+    }
+}
+
+/// Lays the browse tiles out from the top.
+private final class BrowseFlippedView: NSView {
+    override var isFlipped: Bool { true }
 }
 
 extension ChannelPanel: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let row = table.clickedRow
-        guard !isBrowsing, channels.indices.contains(row) else { return }
+        guard channels.indices.contains(row) else { return }
         let channel = channels[row]
         menu.addItem(ClosureMenuItem("Watch") { [weak self] in self?.play(row: row) })
         menu.addItem(
