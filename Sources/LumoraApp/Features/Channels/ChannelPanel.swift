@@ -36,8 +36,8 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     private let store: ChannelStore
     private let tabs = NSSegmentedControl()
     private let searchField = NSSearchField()
-    private let categoryPopup = SearchableChoice()
-    private let countryPopup = SearchableChoice()
+    private let categoryPopup = FilterChip()
+    private let countryPopup = FilterChip()
     private let listsButton = NSPopUpButton(frame: .zero, pullsDown: true)
     private let scopeLabel = NSTextField(labelWithString: "")
     private let table = NSTableView()
@@ -116,8 +116,6 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         searchField.delegate = self
         searchField.sendsSearchStringImmediately = true
         for popup in [categoryPopup, countryPopup] {
-            popup.controlSize = .small
-            popup.font = .systemFont(ofSize: 12)
             popup.onSelect = { [weak self] _ in self?.filterChanged(nil) }
             popup.setContentHuggingPriority(.defaultLow, for: .horizontal)
         }
@@ -285,16 +283,15 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         let groupCounts = Dictionary(grouping: base, by: \.group).mapValues(\.count)
         categories = groupCounts.keys.sorted { ($0 == "Other" ? 1 : 0, $0) < ($1 == "Other" ? 1 : 0, $1) }
         categoryPopup.setOptions(
-            ["All Categories"] + categories.map { "\($0)  (\(groupCounts[$0] ?? 0))" },
+            ["All categories"] + categories.map { "\($0) (\((groupCounts[$0] ?? 0).formatted()))" },
             selected: selectedCategory.flatMap { categories.firstIndex(of: $0) }.map { $0 + 1 } ?? 0)
 
         let named = Set(base.compactMap(\.country)).map { ($0, Locale.current.localizedString(forRegionCode: $0.uppercased()) ?? $0.uppercased()) }
             .sorted { $0.1 < $1.1 }
         countries = named.map(\.0)
         countryPopup.setOptions(
-            ["All Countries"] + named.map(\.1), selected: selectedCountry.flatMap { countries.firstIndex(of: $0) }.map { $0 + 1 } ?? 0)
-        categoryPopup.isEnabled = !categories.isEmpty
-        countryPopup.isEnabled = !countries.isEmpty
+            ["All countries"] + named.map(\.1), icons: [nil] + named.map { Self.flag($0.0) },
+            selected: selectedCountry.flatMap { countries.firstIndex(of: $0) }.map { $0 + 1 } ?? 0)
 
         let category = categoryPopup.selectedIndex > 0 ? categories[safe: categoryPopup.selectedIndex - 1] : nil
         let country = countryPopup.selectedIndex > 0 ? countries[safe: countryPopup.selectedIndex - 1] : nil
@@ -304,8 +301,8 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         isBrowsing = browsing && !base.isEmpty
         table.isHidden = isBrowsing
         browseScroll.isHidden = !isBrowsing
-        // The tiles do what the two filter boxes do; show the boxes once inside a list.
-        filters.isHidden = isBrowsing
+        // The tiles do what the filters do; short lists (a few favourites or recents) need none.
+        filters.isHidden = isBrowsing || (tab != .all && base.count <= 20)
         if isBrowsing {
             rebuildBrowse(base: base, groupCounts: groupCounts)
         }
@@ -558,8 +555,9 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
                 tiles.append(
                     BrowseTile(symbol: "globe", title: "More countries…", count: countryCounts.count) { [weak self] in
                         guard let self else { return }
-                        self.filters.isHidden = false
-                        self.window?.makeFirstResponder(self.countryPopup)
+                        self.showsAllChannels = true
+                        self.enterList()
+                        self.countryPopup.showList()
                     })
             }
             sections.append(Self.grid(tiles))
