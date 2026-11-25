@@ -18,10 +18,22 @@ final class ChannelStore: ObservableObject {
     ]
 
     @Published private(set) var sources: [ChannelSource] = []
-    @Published private(set) var channelsBySource: [UUID: [Channel]] = [:]
+    @Published private(set) var channelsBySource: [UUID: [Channel]] = [:] {
+        didSet { rebuildIndex() }
+    }
+    /// Favourite and recent channels by `Channel.key`.
     @Published private(set) var favourites: Set<String> = []
     @Published private(set) var recent: [String] = []
     @Published private(set) var loadingSources: Set<UUID> = []
+    /// Every channel once, in list order, rebuilt when a list changes.
+    @Published private(set) var all: [Channel] = []
+    /// Channels that failed this session; dimmed and skipped when switching.
+    @Published private(set) var unavailable: Set<String> = []
+
+    private var byKey: [String: Channel] = [:]
+    /// Channel numbers stay with a channel across list updates, like a TV's channel list.
+    private var numbers: [String: Int] = [:]
+    private var byNumber: [Int: String] = [:]
 
     nonisolated private static let maxListBytes = 40 * 1024 * 1024
     private static let refreshInterval: TimeInterval = 24 * 60 * 60
@@ -29,15 +41,35 @@ final class ChannelStore: ObservableObject {
 
     nonisolated private static var folder: URL { AppPaths.applicationSupport.appendingPathComponent("Channels", isDirectory: true) }
     nonisolated private static var stateFile: URL { folder.appendingPathComponent("channels.json") }
-    nonisolated private static func cacheFile(_ id: UUID) -> URL { folder.appendingPathComponent("\(id.uuidString).json") }
+    /// "v2": lists cached by 0.12.0 lack channel IDs, so their channels would get different
+    /// identities (and numbers) than a fresh download; those caches are ignored and re-downloaded.
+    nonisolated private static func cacheFile(_ id: UUID) -> URL { folder.appendingPathComponent("v2-\(id.uuidString).json") }
 
     private struct State: Codable {
         var sources: [ChannelSource] = []
         var favourites: [String] = []
         var recent: [String] = []
+        var numbers: [String: Int]?
     }
 
     // MARK: Loading
+
+    /// Last channel watched, kept outside the lists so the empty screen can offer it without
+    /// loading Live TV.
+    static var lastChannelName: String? { UserDefaults.standard.string(forKey: "lumora.tv.lastChannelName") }
+    static var lastChannelKey: String? { UserDefaults.standard.string(forKey: "lumora.tv.lastChannelKey") }
+    var isLoaded: Bool { loaded }
+
+    /// Frees the channel lists after Live TV is closed; they reload from disk when needed again.
+    func unload() {
+        guard loaded, loadingSources.isEmpty else { return }
+        loaded = false
+        channelsBySource = [:]
+        sources = []
+        favourites = []
+        recent = []
+        unavailable = []
+    }
 
     /// Reads saved lists (off the main thread) and refreshes any older than a day.
     func loadIfNeeded() {
@@ -47,9 +79,19 @@ final class ChannelStore: ObservableObject {
             sources = state.sources
             favourites = Set(state.favourites)
             recent = state.recent
+            numbers = state.numbers ?? [:]
         }
         let ids = sources.map(\.id)
+        let keep = Set(ids.map { Self.cacheFile($0).lastPathComponent } + [Self.stateFile.lastPathComponent])
         Task.detached(priority: .userInitiated) {
+            // Remove caches no list uses any more (removed lists, the 0.12.0 format).
+            if !DebugMode.background,
+                let files = try? FileManager.default.contentsOfDirectory(at: ChannelStore.folder, includingPropertiesForKeys: nil)
+            {
+                for file in files where file.pathExtension == "json" && !keep.contains(file.lastPathComponent) {
+                    try? FileManager.default.removeItem(at: file)
+                }
+            }
             var cached: [UUID: [Channel]] = [:]
             for id in ids {
                 if let data = try? Data(contentsOf: ChannelStore.cacheFile(id)), let channels = try? JSONDecoder().decode([Channel].self, from: data) {
@@ -85,12 +127,7 @@ final class ChannelStore: ObservableObject {
         sources.append(source)
         channelsBySource[source.id] = channels
         let file = Self.cacheFile(source.id)
-        Task.detached(priority: .utility) {
-            try? FileManager.default.createDirectory(at: ChannelStore.folder, withIntermediateDirectories: true)
-            if let data = try? JSONEncoder().encode(channels) {
-                try? data.write(to: file, options: .atomic)
-            }
-        }
+        Self.writeCache(channels, to: file)
         save()
         return source.id
     }
@@ -119,6 +156,7 @@ final class ChannelStore: ObservableObject {
     func removeSource(_ id: UUID) {
         sources.removeAll { $0.id == id }
         channelsBySource[id] = nil
+        rebuildIndex()
         try? FileManager.default.removeItem(at: Self.cacheFile(id))
         save()
     }
@@ -146,12 +184,7 @@ final class ChannelStore: ObservableObject {
                 sources[index].lastUpdated = Date()
                 sources[index].lastError = nil
                 let file = Self.cacheFile(id)
-                Task.detached(priority: .utility) {
-                    try? FileManager.default.createDirectory(at: ChannelStore.folder, withIntermediateDirectories: true)
-                    if let data = try? JSONEncoder().encode(channels) {
-                        try? data.write(to: file, options: .atomic)
-                    }
-                }
+                Self.writeCache(channels, to: file)
             case .failure(let error):
                 sources[index].lastError = error.message
             }
@@ -200,49 +233,106 @@ final class ChannelStore: ObservableObject {
         }.value
     }
 
-    // MARK: Favourites and recents
+    // MARK: Index
 
-    func isFavourite(_ channel: Channel) -> Bool { favourites.contains(channel.id) }
+    private func rebuildIndex() {
+        var seen = Set<String>()
+        var combined: [Channel] = []
+        for source in sources {
+            for channel in channelsBySource[source.id] ?? [] where seen.insert(channel.key).inserted {
+                combined.append(channel)
+            }
+        }
+        byKey = Dictionary(combined.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        // New channels get the next free number; existing ones keep theirs.
+        var next = (numbers.values.max() ?? 0) + 1
+        var changed = false
+        for channel in combined where numbers[channel.key] == nil {
+            numbers[channel.key] = next
+            next += 1
+            changed = true
+        }
+        byNumber = Dictionary(numbers.map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        all = combined.sorted { (numbers[$0.key] ?? 0) < (numbers[$1.key] ?? 0) }
+        migrateLinkKeys()
+        if changed {
+            save()
+        }
+    }
+
+    /// 0.12.0 stored favourites and recents by stream link; move them to channel keys.
+    private func migrateLinkKeys() {
+        guard favourites.contains(where: { $0.contains("://") }) || recent.contains(where: { $0.contains("://") }) else { return }
+        let byLink = Dictionary(all.map { ($0.id, $0.key) }, uniquingKeysWith: { first, _ in first })
+        guard !byLink.isEmpty else { return }
+        favourites = Set(favourites.compactMap { $0.contains("://") ? byLink[$0] : $0 })
+        var seen = Set<String>()
+        recent = recent.compactMap { $0.contains("://") ? byLink[$0] : $0 }.filter { seen.insert($0).inserted }
+        save()
+    }
+
+    func channel(forKey key: String) -> Channel? { byKey[key] }
+    func channel(number: Int) -> Channel? { byNumber[number].flatMap { byKey[$0] } }
+    func number(of channel: Channel) -> Int? { numbers[channel.key] }
+
+    /// The channel a playing item belongs to (matched by link, then by name).
+    func channel(for item: PlaybackItem) -> Channel? {
+        all.first { $0.url == item.url } ?? all.first { $0.name == item.title }
+    }
+
+    var lastWatched: Channel? { recent.first.flatMap { byKey[$0] } }
+
+    // MARK: Favourites, recents, availability
+
+    func isFavourite(_ channel: Channel) -> Bool { favourites.contains(channel.key) }
 
     func toggleFavourite(_ channel: Channel) {
-        if favourites.contains(channel.id) {
-            favourites.remove(channel.id)
+        if favourites.contains(channel.key) {
+            favourites.remove(channel.key)
         } else {
-            favourites.insert(channel.id)
+            favourites.insert(channel.key)
         }
         save()
     }
 
-    func markWatched(_ url: URL) {
-        let id = url.absoluteString
-        guard allChannels.contains(where: { $0.id == id }) else { return }
-        recent.removeAll { $0 == id }
-        recent.insert(id, at: 0)
+    var favouriteChannels: [Channel] { all.filter { favourites.contains($0.key) } }
+    var recentChannels: [Channel] { recent.compactMap { byKey[$0] } }
+
+    func markWatched(_ channel: Channel) {
+        UserDefaults.standard.set(channel.name, forKey: "lumora.tv.lastChannelName")
+        UserDefaults.standard.set(channel.key, forKey: "lumora.tv.lastChannelKey")
+        unavailable.remove(channel.key)
+        recent.removeAll { $0 == channel.key }
+        recent.insert(channel.key, at: 0)
         if recent.count > 30 {
             recent.removeLast(recent.count - 30)
         }
         save()
     }
 
-    /// Every channel once, in source order (a channel in two lists appears once).
-    var allChannels: [Channel] {
-        var seen = Set<String>()
-        return sources.flatMap { channelsBySource[$0.id] ?? [] }.filter { seen.insert($0.id).inserted }
+    func markUnavailable(_ channel: Channel) {
+        unavailable.insert(channel.key)
     }
 
-    func channel(withID id: String) -> Channel? {
-        for source in sources {
-            if let match = channelsBySource[source.id]?.first(where: { $0.id == id }) { return match }
-        }
-        return nil
-    }
+    func isUnavailable(_ channel: Channel) -> Bool { unavailable.contains(channel.key) }
 
     // MARK: Saving
+
+    private static func writeCache(_ channels: [Channel], to file: URL) {
+        // Background test runs (LUMORA_BACKGROUND, DEBUG only) must not change real data.
+        guard !DebugMode.background else { return }
+        Task.detached(priority: .utility) {
+            try? FileManager.default.createDirectory(at: ChannelStore.folder, withIntermediateDirectories: true)
+            if let data = try? JSONEncoder().encode(channels) {
+                try? data.write(to: file, options: .atomic)
+            }
+        }
+    }
 
     private func save() {
         // Background test runs (LUMORA_BACKGROUND, DEBUG only) must not change real data.
         guard !DebugMode.background else { return }
-        let state = State(sources: sources, favourites: Array(favourites), recent: recent)
+        let state = State(sources: sources, favourites: Array(favourites), recent: recent, numbers: numbers)
         Task.detached(priority: .utility) {
             try? FileManager.default.createDirectory(at: ChannelStore.folder, withIntermediateDirectories: true)
             if let data = try? JSONEncoder().encode(state) {

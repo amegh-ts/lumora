@@ -100,19 +100,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// Plays channels from the Channels window; they replace the active window's playlist.
-    func playChannels(_ items: [PlaybackItem], startAt index: Int) {
-        activeController().playChannels(items, startAt: index)
-        Self.activateApp()
-    }
-
+    /// Window › Live TV when no player window has focus: opens the panel in the active one.
     @objc func showChannels(_ sender: Any?) {
-        ChannelsWindowController.shared.showWindow(sender)
+        activeController().showLiveTV(addList: false)
         Self.activateApp()
     }
 
     @objc func addChannelList(_ sender: Any?) {
-        ChannelsWindowController.shared.promptForList()
+        activeController().showLiveTV(addList: true)
         Self.activateApp()
     }
 

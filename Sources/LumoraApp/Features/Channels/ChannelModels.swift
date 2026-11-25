@@ -10,8 +10,18 @@ struct Channel: Codable, Hashable, Identifiable, Sendable {
     var country: String?
     var userAgent: String?
     var referrer: String?
+    /// The list's own channel ID (tvg-id), stable across list updates.
+    var tvgID: String?
 
     var id: String { url.absoluteString }
+
+    /// Identity that survives list refreshes (stream links often change): the channel ID, or
+    /// the name without quality tags like "(720p)".
+    var key: String {
+        if let tvgID, !tvgID.isEmpty { return "id:" + tvgID.lowercased() }
+        let base = name.replacingOccurrences(of: #"\s*[\(\[][^\)\]]*[\)\]]"#, with: "", options: .regularExpression)
+        return "name:" + base.lowercased().filter { $0.isLetter || $0.isNumber }
+    }
 
     var playbackItem: PlaybackItem {
         PlaybackItem(url: url, title: name, kind: .channel, userAgent: userAgent, referrer: referrer)
@@ -97,7 +107,8 @@ enum ChannelListParser {
                     logo: attributes["tvg-logo"].flatMap { URL(string: $0) }.flatMap { ["http", "https"].contains($0.scheme?.lowercased() ?? "") ? $0 : nil },
                     country: country(fromTVGID: attributes["tvg-id"]) ?? attributes["tvg-country"].flatMap { $0.count == 2 ? $0.lowercased() : nil },
                     userAgent: userAgent,
-                    referrer: referrer
+                    referrer: referrer,
+                    tvgID: attributes["tvg-id"].flatMap { $0.isEmpty ? nil : $0 }
                 ))
         }
         return channels

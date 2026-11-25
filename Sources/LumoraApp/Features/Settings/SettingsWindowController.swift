@@ -326,7 +326,7 @@ enum SettingsPanes {
                         { settings.subtitleDelay }, { settings.subtitleDelay = $0 })),
                 Form.row(
                     "Font",
-                    control: Form.popup(
+                    control: Form.searchableChoice(
                         [("System", "")] + NSFontManager.shared.availableFontFamilies.map { ($0, $0) },
                         { settings.subtitleFont }, { settings.subtitleFont = $0 })),
                 Form.row(

@@ -11,6 +11,7 @@ enum ControlsAction {
     case toggleMute
     case toggleFullscreen
     case togglePlaylist
+    case toggleChannels
 }
 
 enum ControlsMenu {
@@ -42,6 +43,8 @@ final class ControlsOverlay: NSView {
     private let subtitlesButton = HUDButton(symbol: "captions.bubble", size: 14, tooltip: "Subtitles")
     private let moreButton = HUDButton(symbol: "ellipsis.circle", size: 15, tooltip: "More")
     private let playlistButton = HUDButton(symbol: "sidebar.right", size: 14, tooltip: "Playlist")
+    private let channelsButton = HUDButton(symbol: "tv", size: 14, tooltip: "Live TV (⇧⌘T)")
+    private var channelMode = false
     private let fullscreenButton = HUDButton(symbol: "arrow.up.left.and.arrow.down.right", size: 13, tooltip: "Full screen")
 
     private var duration: TimeInterval = 0
@@ -88,7 +91,7 @@ final class ControlsOverlay: NSView {
         leftGroup.spacing = 2
         let centerGroup = NSStackView(views: [previousButton, backButton, playButton, forwardButton, nextButton])
         centerGroup.spacing = 6
-        let rightGroup = NSStackView(views: [speedButton, audioButton, subtitlesButton, moreButton, playlistButton, fullscreenButton])
+        let rightGroup = NSStackView(views: [speedButton, audioButton, subtitlesButton, moreButton, channelsButton, playlistButton, fullscreenButton])
         rightGroup.spacing = 2
         for group in [leftGroup, centerGroup, rightGroup] {
             group.orientation = .horizontal
@@ -134,6 +137,7 @@ final class ControlsOverlay: NSView {
         nextButton.onClick = { [weak self] in self?.onAction?(.next) }
         volumeButton.onClick = { [weak self] in self?.onAction?(.toggleMute) }
         playlistButton.onClick = { [weak self] in self?.onAction?(.togglePlaylist) }
+        channelsButton.onClick = { [weak self] in self?.onAction?(.toggleChannels) }
         fullscreenButton.onClick = { [weak self] in self?.onAction?(.toggleFullscreen) }
         speedButton.onClick = { [weak self] in self?.popMenu(.speed, from: self?.speedButton) }
         audioButton.onClick = { [weak self] in self?.popMenu(.audio, from: self?.audioButton) }
@@ -155,12 +159,17 @@ final class ControlsOverlay: NSView {
     override func layout() {
         super.layout()
         let width = bounds.width
-        previousButton.isHidden = width < 600 || !hasNeighbours
-        nextButton.isHidden = width < 600 || !hasNeighbours
+        // Watching TV, channel up/down always shows; ±10 s matters less on live channels.
+        previousButton.isHidden = channelMode ? false : (width < 600 || !hasNeighbours)
+        nextButton.isHidden = channelMode ? false : (width < 600 || !hasNeighbours)
+        backButton.isHidden = channelMode && width < 600
+        forwardButton.isHidden = channelMode && width < 600
+        channelsButton.isHidden = width < 480
         volumeSlider.isHidden = width < 520
         speedButton.isHidden = width < 460
         audioButton.isHidden = width < 430
-        playlistButton.isHidden = width < 400
+        // Live TV has its own channel panel; the playlist of files doesn't apply.
+        playlistButton.isHidden = width < 400 || channelMode
     }
 
     var isInteracting: Bool {
@@ -248,6 +257,24 @@ final class ControlsOverlay: NSView {
         )
         fullscreenButton.toolTip = isFullscreen ? "Exit full screen" : "Full screen"
         fullscreenButton.setAccessibilityLabel(fullscreenButton.toolTip)
+    }
+
+    /// Live TV: Previous/Next become channel down/up, with the neighbouring channels as tooltips.
+    func setChannelMode(_ on: Bool, previousName: String? = nil, nextName: String? = nil) {
+        if on != channelMode {
+            channelMode = on
+            previousButton.setSymbol(on ? "chevron.down" : "backward.end.fill", size: on ? 15 : 13)
+            nextButton.setSymbol(on ? "chevron.up" : "forward.end.fill", size: on ? 15 : 13)
+            needsLayout = true
+        }
+        previousButton.toolTip = on ? "Channel down\(previousName.map { ": \($0)" } ?? "") (⌘↓)" : "Previous item"
+        nextButton.toolTip = on ? "Channel up\(nextName.map { ": \($0)" } ?? "") (⌘↑)" : "Next item"
+        previousButton.setAccessibilityLabel(previousButton.toolTip)
+        nextButton.setAccessibilityLabel(nextButton.toolTip)
+    }
+
+    func setChannelsButtonActive(_ active: Bool) {
+        channelsButton.contentTintColor = active ? HUD.accent : HUD.primaryText
     }
 
     func update(buffered: [ClosedRange<TimeInterval>]) {

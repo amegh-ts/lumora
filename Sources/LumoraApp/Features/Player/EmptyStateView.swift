@@ -5,6 +5,9 @@ final class EmptyStateView: NSView {
     var onOpenFile: (() -> Void)?
     var onOpenURL: (() -> Void)?
     var onOpenRecent: ((URL) -> Void)?
+    var onLiveTV: (() -> Void)?
+    var onContinueChannel: (() -> Void)?
+    private let continueChannelButton = NSButton(title: "", target: nil, action: nil)
 
     private let iconView = NSImageView()
     private let titleLabel = HUD.label(size: 22, weight: .semibold)
@@ -49,7 +52,16 @@ final class EmptyStateView: NSView {
         let urlButton = NSButton(title: "Open URL…", target: self, action: #selector(openURL))
         urlButton.bezelStyle = .rounded
         urlButton.controlSize = .large
-        let buttons = NSStackView(views: [openButton, urlButton])
+        let tvButton = NSButton(title: "Live TV", target: self, action: #selector(liveTV))
+        tvButton.bezelStyle = .rounded
+        tvButton.controlSize = .large
+        tvButton.image = NSImage(systemSymbolName: "tv", accessibilityDescription: nil)
+        tvButton.imagePosition = .imageLeading
+        continueChannelButton.bezelStyle = .inline
+        continueChannelButton.target = self
+        continueChannelButton.action = #selector(continueChannel)
+        continueChannelButton.isHidden = true
+        let buttons = NSStackView(views: [openButton, urlButton, tvButton])
         buttons.spacing = 10
 
         recentHeader.stringValue = "CONTINUE WATCHING"
@@ -57,7 +69,7 @@ final class EmptyStateView: NSView {
         recentStack.alignment = .leading
         recentStack.spacing = 2
 
-        let stack = NSStackView(views: [iconView, titleLabel, subtitleLabel, errorLabel, buttons, recentHeader, recentStack])
+        let stack = NSStackView(views: [iconView, titleLabel, subtitleLabel, errorLabel, buttons, continueChannelButton, recentHeader, recentStack])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 10
@@ -85,6 +97,20 @@ final class EmptyStateView: NSView {
     func setError(_ message: String?) {
         errorLabel.stringValue = message ?? ""
         errorLabel.isHidden = message == nil
+    }
+
+    /// "Continue watching <channel>" under the buttons, when a channel was watched before.
+    func setLastChannel(_ name: String?) {
+        continueChannelButton.isHidden = name == nil
+        continueChannelButton.title = name.map { "▶︎ Continue watching \($0)" } ?? ""
+    }
+
+    @objc private func liveTV() {
+        onLiveTV?()
+    }
+
+    @objc private func continueChannel() {
+        onContinueChannel?()
     }
 
     func setDropTarget(_ active: Bool) {
