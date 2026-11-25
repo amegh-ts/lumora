@@ -443,6 +443,21 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
             tabs.selectedSegment = Tab.all.rawValue
             tabChanged(tabs)
         }
+
+        /// Test steps: "category:News", "country:in", "back", "filtercategory:News", "play:0".
+        func debugStep(_ step: String) -> String {
+            let parts = step.split(separator: ":", maxSplits: 1).map(String.init)
+            switch parts[0] {
+            case "category": openCategory(parts[1])
+            case "country": openCountry(parts[1])
+            case "back": backToCategories(nil)
+            case "filtercategory":
+                if let index = categories.firstIndex(of: parts[1]) { categoryPopup.select(index: index + 1) }
+            case "play": play(row: Int(parts[1]) ?? 0)
+            default: break
+            }
+            return "browsing=\(isBrowsing) rows=\(channels.count) back=\(!backButton.isHidden) filters=\(!filters.isHidden) scope=\(scopeLabel.stringValue)"
+        }
     #endif
 
     @objc private func backToCategories(_ sender: Any?) {

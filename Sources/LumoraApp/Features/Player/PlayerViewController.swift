@@ -414,6 +414,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
                 self.channelPanel.playingKey = nil
             } else {
                 self.updateChannelControls()
+                // Channels are live from the start; don't flash an empty seek bar while tuning.
+                self.controls.update(isLive: true)
             }
             self.lastSavedTime = 0
             self.watchedMarked = false

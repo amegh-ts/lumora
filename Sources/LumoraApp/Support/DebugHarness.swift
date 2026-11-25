@@ -178,6 +178,27 @@ enum DebugMode {
                     NSApp.windows.compactMap { $0.contentViewController as? PlayerViewController }.first?.channelPanel.debugSelectAllTab()
                 }
             }
+            // LUMORA_PANEL_STEPS="4:category:News,6:back,8:country:in" → drive the Live TV panel; a
+            // snapshot of the player window is saved per step to LUMORA_PANEL_SHOTS.
+            for entry in (environment["LUMORA_PANEL_STEPS"] ?? "").split(separator: ",") {
+                let parts = entry.split(separator: ":", maxSplits: 1).map(String.init)
+                guard parts.count == 2, let delay = Double(parts[0]) else { continue }
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    guard let player = NSApp.windows.compactMap({ $0.contentViewController as? PlayerViewController }).first else { return }
+                    let result = player.channelPanel.debugStep(parts[1])
+                    print("[debug] panel \(parts[1]) → \(result) watching=\(player.liveTV.current?.name ?? "-")")
+                    if let folder = environment["LUMORA_PANEL_SHOTS"] {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                            guard let frameView = player.view.window?.contentView?.superview,
+                                let rep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds)
+                            else { return }
+                            frameView.cacheDisplay(in: frameView.bounds, to: rep)
+                            let name = parts[1].replacingOccurrences(of: ":", with: "-")
+                            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(folder)/\(parts[0])-\(name).png"))
+                        }
+                    }
+                }
+            }
             // LUMORA_CROP="2:2.35" → at 2 s crop to 2.35:1 and reshape the window.
             if let entry = environment["LUMORA_CROP"] {
                 let parts = entry.split(separator: ":").compactMap { Double($0) }
