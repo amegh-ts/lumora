@@ -19,6 +19,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DebugHarness.run { [weak self] urls in self?.activeController().open(urls) }
         #endif
         Updater.shared.start(settings: SettingsStore.shared)
+        // After the window is up, offer to send a report if Lumora crashed last time.
+        if !DebugMode.background {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                CrashReporter.offerToSendPendingReport()
+            }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

@@ -40,6 +40,17 @@ enum DebugMode {
     enum DebugHarness {
         static func run(open: (([URL]) -> Void)) {
             let environment = ProcessInfo.processInfo.environment
+            // LUMORA_CRASH_REPORT=/path/to/report.ips → print the scrubbed report and issue link length.
+            if let path = environment["LUMORA_CRASH_REPORT"] {
+                if let report = CrashReporter.report(from: URL(fileURLWithPath: path)) {
+                    print("[debug] crash title=\(report.title)\n\(report.body)")
+                    print("[debug] crash issue url length=\(CrashReporter.issueURL(for: report)?.absoluteString.count ?? -1)")
+                } else {
+                    print("[debug] crash report unreadable")
+                }
+                NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0.5)
+                return
+            }
             // LUMORA_WINDOW_SHOTS=dir LUMORA_WINDOWS="showLibrary:,convertMedia:" → open each window
             // through its app action and save a picture of it.
             if let directory = environment["LUMORA_WINDOW_SHOTS"] {
