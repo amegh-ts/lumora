@@ -528,7 +528,7 @@ final class PlaybackEngine: ObservableObject {
     /// destroys its renderer and GPU textures; `resumeVideo()` brings video back at the same spot.
     func suspendVideo() {
         // Without an audio track nothing would keep playback going, so leave video-only files alone.
-        guard hasMedia, suspendedVideoID == nil, !audioTracks.isEmpty,
+        guard hasMedia, suspendedVideoID == nil, !isSoftwareOutput, !audioTracks.isEmpty,
             let track = videoTracks.first(where: { $0.isSelected })
         else { return }
         suspendedVideoID = track.id
@@ -675,8 +675,36 @@ final class PlaybackEngine: ObservableObject {
         setProperty("sub-scale", String(min(max(scale, 0.3), 3)))
     }
 
+    private var hardwareDecoding = true
+    private(set) var isSoftwareOutput = false
+
     func setHardwareDecoding(_ enabled: Bool) {
-        setProperty("hwdec", enabled ? "auto-safe" : "no")
+        hardwareDecoding = enabled
+        setProperty("hwdec", isSoftwareOutput ? (enabled ? "auto-copy-safe" : "no") : (enabled ? "auto-safe" : "no"))
+    }
+
+    /// Picture in Picture: render through the render API (software) instead of the Metal output.
+    /// Hardware decoding copies frames back to memory, which the software renderer needs.
+    func beginSoftwareOutput() {
+        guard renderer == .metal, !isSoftwareOutput else { return }
+        isSoftwareOutput = true
+        setProperty("hwdec", hardwareDecoding ? "auto-copy-safe" : "no")
+        setProperty("vo", "libmpv")
+        restartVideoTrack()
+    }
+
+    func endSoftwareOutput() {
+        guard isSoftwareOutput else { return }
+        isSoftwareOutput = false
+        setProperty("vo", "gpu-next")
+        setProperty("hwdec", hardwareDecoding ? "auto-safe" : "no")
+        restartVideoTrack()
+    }
+
+    /// Changing the output can leave video deselected; name the track to bring it back.
+    private func restartVideoTrack() {
+        guard suspendedVideoID == nil, let track = videoTracks.first(where: \.isSelected) ?? videoTracks.first else { return }
+        setProperty("vid", String(track.id))
     }
 
     func setVideoAdjustments(brightness: Double, contrast: Double, saturation: Double) {

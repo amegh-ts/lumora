@@ -45,6 +45,7 @@ Every shortcut is also listed next to its command in the menu bar.
 | ⌘3 | Fit to screen |
 | ⌘I | Media info |
 | ⌥⌘M | Mini player |
+| ⌥⌘P | Picture in Picture |
 | ⌥⌘T | Keep on top |
 | P | Show / hide playlist |
 | ⇧⌘L | Library |

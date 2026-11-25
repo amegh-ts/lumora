@@ -35,6 +35,7 @@
 - Go to Time (⌘J); Half, Actual, Double Size and Fit to Screen; the window keeps the video's shape while resizing, and a setting decides whether new files resize it.
 - Audio files show their title, artist and album (cover art when the file has it); live streams and radio show a LIVE badge instead of a seek bar; streams show the downloaded part on the timeline.
 
+- Picture in Picture (⌥⌘P, View menu or the ••• menu): the system's floating PiP window with play/pause and ±15 s; the main window shows a placeholder and video returns to it when PiP closes. Needs the Metal renderer.
 - Mini player: compact controls on hover (play/pause, ±10 s, seek bar, close, expand), snaps to the nearest screen corner, resizes in the video's shape.
 - Aspect ratio override (16:9, 4:3, 2.35:1, 1.85:1, 1:1), crop presets and deinterlacing (Off / Automatic / On) in the Video menu.
 
@@ -58,4 +59,4 @@
 - Automatic, signed updates through Sparkle from GitHub Releases.
 
 ## Not yet
-Picture in Picture (#4), AirPlay video (#5), Chromecast/DLNA (#6), IPTV channel lists (#24), redesigned Library and Converter windows (#25), notarization (#2).
+AirPlay video (#5), Chromecast/DLNA (#6), IPTV channel lists (#24), redesigned Library and Converter windows (#25), notarization (#2).

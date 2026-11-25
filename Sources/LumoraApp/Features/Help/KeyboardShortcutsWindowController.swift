@@ -63,6 +63,7 @@ final class KeyboardShortcutsWindowController: NSWindowController, NSSearchField
                 Shortcut(keys: ["⌘0", "⌘1", "⌘2"], action: "Half / actual / double size"),
                 Shortcut(keys: ["⌘3"], action: "Fit to screen"),
                 Shortcut(keys: ["⌥⌘M"], action: "Mini player"),
+                Shortcut(keys: ["⌥⌘P"], action: "Picture in Picture"),
                 Shortcut(keys: ["⌥⌘T"], action: "Keep on top"),
                 Shortcut(keys: ["⌥⌘R"], action: "Rotate 90°"),
                 Shortcut(keys: ["⇧⌘S"], action: "Screenshot"),

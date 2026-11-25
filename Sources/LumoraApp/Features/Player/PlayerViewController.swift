@@ -16,6 +16,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     private let emptyState = EmptyStateView(frame: .zero)
     private let audioArtwork = AudioArtworkView(frame: .zero)
     private let miniControls = MiniControlsView(frame: .zero)
+    private lazy var pictureInPicture = makePictureInPicture()
+    private var hasPictureInPicture = false
+    private let pipPlaceholder = NSStackView()
     private var snapWork: DispatchWorkItem?
     private var isSnapping = false
     private var isMiniPlayer: Bool { miniPlayerRestoreFrame != nil }
@@ -83,7 +86,17 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         setChromeVisible(true, animated: false)
     }
 
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        if hasPictureInPicture {
+            pictureInPicture.layout()
+        }
+    }
+
     func tearDown() {
+        if hasPictureInPicture {
+            pictureInPicture.tearDown()
+        }
         NowPlayingService.shared.playerDidClose(self)
         hideTimer?.invalidate()
         saveProgress(force: true)
@@ -171,6 +184,25 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
         controls.onAction = { [weak self] action in self?.handle(action) }
         controls.menuProvider = { [weak self] kind in self?.menu(for: kind) ?? NSMenu() }
+        let pipIcon = NSImageView(image: NSImage(systemSymbolName: "pip", accessibilityDescription: nil) ?? NSImage())
+        pipIcon.symbolConfiguration = .init(pointSize: 44, weight: .light)
+        pipIcon.contentTintColor = HUD.secondaryText
+        let pipLabel = HUD.label(size: 14, weight: .medium, color: HUD.secondaryText)
+        pipLabel.stringValue = "Playing in Picture in Picture"
+        let pipReturn = NSButton(title: "Return to Window", target: self, action: #selector(togglePictureInPicture(_:)))
+        pipReturn.bezelStyle = .rounded
+        for view in [pipIcon, pipLabel, pipReturn] as [NSView] {
+            pipPlaceholder.addArrangedSubview(view)
+        }
+        pipPlaceholder.orientation = .vertical
+        pipPlaceholder.spacing = 12
+        pipPlaceholder.isHidden = true
+        pipPlaceholder.translatesAutoresizingMaskIntoConstraints = false
+        rootView.addSubview(pipPlaceholder, positioned: .above, relativeTo: audioArtwork)
+        NSLayoutConstraint.activate([
+            pipPlaceholder.centerXAnchor.constraint(equalTo: rootView.centerXAnchor),
+            pipPlaceholder.centerYAnchor.constraint(equalTo: rootView.centerYAnchor, constant: -30)
+        ])
         miniControls.onTogglePlayback = { [weak self] in self?.engine.togglePlayback() }
         miniControls.onSkip = { [weak self] in self?.engine.skip($0) }
         miniControls.onScrub = { [weak self] time, finished in self?.engine.seek(to: time, exact: finished) }
@@ -195,6 +227,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
                 }
                 self.saveProgress(force: false)
                 NowPlayingService.shared.playerDidUpdateTime(self)
+                if self.hasPictureInPicture, self.pictureInPicture.isActive {
+                    self.pictureInPicture.syncTimebase()
+                }
             }
             .store(in: &cancellables)
 
@@ -230,6 +265,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
                 guard let self else { return }
                 self.controls.update(isPlaying: isPlaying)
                 self.miniControls.update(isPlaying: isPlaying)
+                if self.hasPictureInPicture, self.pictureInPicture.isActive {
+                    DispatchQueue.main.async { self.pictureInPicture.syncTimebase() }
+                }
                 if isPlaying {
                     NowPlayingService.shared.playerDidStartPlaying(self)
                 } else {
@@ -705,6 +743,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         }
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.view.window?.occlusionState.contains(.visible) == false else { return }
+            // In Picture in Picture the video is still on screen, just not in this window.
+            if self.hasPictureInPicture, self.pictureInPicture.isActive { return }
             self.engine.suspendVideo()
         }
         suspendVideoWork = work
@@ -991,6 +1031,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             menu.addItem(.separator())
         }
         menu.addItem(ClosureMenuItem("Take Screenshot") { [weak self] in self?.takeScreenshot(nil) })
+        menu.addItem(ClosureMenuItem("Picture in Picture") { [weak self] in self?.togglePictureInPicture(nil) })
         menu.addItem(ClosureMenuItem("Media Info") { [weak self] in self?.showMediaInfo(nil) })
         menu.addItem(ClosureMenuItem("Go to Time…") { [weak self] in self?.goToTime(nil) })
         menu.addItem(ClosureMenuItem("Add Bookmark") { [weak self] in self?.addBookmark() })
@@ -1353,6 +1394,67 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         isSnapping = false
     }
 
+    private func makePictureInPicture() -> PictureInPicture {
+        let pip = PictureInPicture(engine: engine)
+        hasPictureInPicture = true
+        pip.hostView.translatesAutoresizingMaskIntoConstraints = false
+        rootView.addSubview(pip.hostView, positioned: .above, relativeTo: videoView)
+        NSLayoutConstraint.activate([
+            pip.hostView.leadingAnchor.constraint(equalTo: videoView.leadingAnchor),
+            pip.hostView.trailingAnchor.constraint(equalTo: videoView.trailingAnchor),
+            pip.hostView.topAnchor.constraint(equalTo: videoView.topAnchor),
+            pip.hostView.bottomAnchor.constraint(equalTo: videoView.bottomAnchor)
+        ])
+        pip.onActiveChange = { [weak self] active in
+            guard let self else { return }
+            self.pipPlaceholder.isHidden = !active
+            if !active {
+                self.osd.show("Back in the window", symbol: "pip.exit")
+            }
+        }
+        pip.onRestore = { [weak self] in
+            self?.view.window?.makeKeyAndOrderFront(nil)
+            AppDelegate.activateApp()
+        }
+        return pip
+    }
+
+    /// View › Picture in Picture (⌥⌘P): the video floats above other apps in the system PiP window.
+    @objc func togglePictureInPicture(_ sender: Any?) {
+        if hasPictureInPicture, pictureInPicture.isActive {
+            pictureInPicture.stop()
+            return
+        }
+        guard engine.hasMedia, engine.hasPicture else { return }
+        guard engine.renderer == .metal, !videoView.isUsingOpenGL else {
+            osd.show("Picture in Picture needs the Metal renderer (Settings › Video)", symbol: "pip")
+            return
+        }
+        guard PictureInPicture.isSupported else {
+            osd.show("Picture in Picture isn't available on this Mac", symbol: "pip")
+            return
+        }
+        leaveMiniPlayerIfNeeded()
+        if view.window?.styleMask.contains(.fullScreen) == true {
+            view.window?.toggleFullScreen(nil)
+        }
+        pictureInPicture.start()
+    }
+
+    /// DEBUG test hook: runs the PiP frame pipeline without the floating window.
+    func debugPictureInPicture(start: Bool, frameFile: URL?) -> String {
+        if start {
+            pictureInPicture.start(dryRun: true)
+            return "pip dry-run started"
+        }
+        let frames = pictureInPicture.framesRendered
+        if let frameFile {
+            pictureInPicture.debugSaveFrame(to: frameFile)
+        }
+        pictureInPicture.stop()
+        return "pip dry-run stopped frames=\(frames)"
+    }
+
     @objc func toggleMiniPlayer(_ sender: Any?) {
         guard let window = view.window else { return }
         if let restore = miniPlayerRestoreFrame {
@@ -1400,6 +1502,10 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             return engine.hasMedia
         case #selector(nextItem(_:)), #selector(previousItem(_:)):
             return playlist.items.count > 1
+        case #selector(togglePictureInPicture(_:)):
+            let active = hasPictureInPicture && pictureInPicture.isActive
+            menuItem.title = active ? "Exit Picture in Picture" : "Picture in Picture"
+            return active || (engine.hasMedia && engine.hasPicture)
         case #selector(toggleVolumeBoost(_:)):
             menuItem.state = settings.volumeBoost ? .on : .off
             return true
