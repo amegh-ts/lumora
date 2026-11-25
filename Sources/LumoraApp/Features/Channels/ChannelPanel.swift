@@ -36,8 +36,8 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     private let store: ChannelStore
     private let tabs = NSSegmentedControl()
     private let searchField = NSSearchField()
-    private let categoryPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let countryPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let categoryPopup = SearchableChoice()
+    private let countryPopup = SearchableChoice()
     private let listsButton = NSPopUpButton(frame: .zero, pullsDown: true)
     private let scopeLabel = NSTextField(labelWithString: "")
     private let table = NSTableView()
@@ -110,8 +110,8 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         searchField.sendsSearchStringImmediately = true
         for popup in [categoryPopup, countryPopup] {
             popup.controlSize = .small
-            popup.target = self
-            popup.action = #selector(filterChanged(_:))
+            popup.font = .systemFont(ofSize: 12)
+            popup.onSelect = { [weak self] _ in self?.filterChanged(nil) }
             popup.setContentHuggingPriority(.defaultLow, for: .horizontal)
         }
         categoryPopup.setAccessibilityLabel("Category")
@@ -211,6 +211,12 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
         revealPlaying()
     }
 
+    /// Drops the channel rows (Live TV unloaded); `prepareToShow` fills them again.
+    func clear() {
+        channels = []
+        table.reloadData()
+    }
+
     func focusSearch() {
         window?.makeFirstResponder(searchField)
     }
@@ -227,32 +233,25 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
 
     func reload() {
         let base = tabChannels()
-        let selectedCategory = categoryPopup.indexOfSelectedItem > 0 ? categories[safe: categoryPopup.indexOfSelectedItem - 1] : nil
-        let selectedCountry = countryPopup.indexOfSelectedItem > 0 ? countries[safe: countryPopup.indexOfSelectedItem - 1] : nil
+        let selectedCategory = categoryPopup.selectedIndex > 0 ? categories[safe: categoryPopup.selectedIndex - 1] : nil
+        let selectedCountry = countryPopup.selectedIndex > 0 ? countries[safe: countryPopup.selectedIndex - 1] : nil
 
         let groupCounts = Dictionary(grouping: base, by: \.group).mapValues(\.count)
         categories = groupCounts.keys.sorted { ($0 == "Other" ? 1 : 0, $0) < ($1 == "Other" ? 1 : 0, $1) }
-        categoryPopup.removeAllItems()
-        categoryPopup.addItem(withTitle: "All Categories")
-        categoryPopup.addItems(withTitles: categories.map { "\($0)  (\(groupCounts[$0] ?? 0))" })
-        if let selectedCategory, let index = categories.firstIndex(of: selectedCategory) {
-            categoryPopup.selectItem(at: index + 1)
-        }
+        categoryPopup.setOptions(
+            ["All Categories"] + categories.map { "\($0)  (\(groupCounts[$0] ?? 0))" },
+            selected: selectedCategory.flatMap { categories.firstIndex(of: $0) }.map { $0 + 1 } ?? 0)
 
         let named = Set(base.compactMap(\.country)).map { ($0, Locale.current.localizedString(forRegionCode: $0.uppercased()) ?? $0.uppercased()) }
             .sorted { $0.1 < $1.1 }
         countries = named.map(\.0)
-        countryPopup.removeAllItems()
-        countryPopup.addItem(withTitle: "All Countries")
-        countryPopup.addItems(withTitles: named.map(\.1))
-        if let selectedCountry, let index = countries.firstIndex(of: selectedCountry) {
-            countryPopup.selectItem(at: index + 1)
-        }
+        countryPopup.setOptions(
+            ["All Countries"] + named.map(\.1), selected: selectedCountry.flatMap { countries.firstIndex(of: $0) }.map { $0 + 1 } ?? 0)
         categoryPopup.isEnabled = !categories.isEmpty
         countryPopup.isEnabled = !countries.isEmpty
 
-        let category = categoryPopup.indexOfSelectedItem > 0 ? categories[safe: categoryPopup.indexOfSelectedItem - 1] : nil
-        let country = countryPopup.indexOfSelectedItem > 0 ? countries[safe: countryPopup.indexOfSelectedItem - 1] : nil
+        let category = categoryPopup.selectedIndex > 0 ? categories[safe: categoryPopup.selectedIndex - 1] : nil
+        let country = countryPopup.selectedIndex > 0 ? countries[safe: countryPopup.selectedIndex - 1] : nil
         let query = searchField.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
         let number = Int(query)
         channels = base.filter { channel in
@@ -272,10 +271,10 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
     /// Describes what channel up/down will move through.
     var scopeTitle: String {
         var parts = [tab.title]
-        if categoryPopup.indexOfSelectedItem > 0, let category = categories[safe: categoryPopup.indexOfSelectedItem - 1] {
+        if categoryPopup.selectedIndex > 0, let category = categories[safe: categoryPopup.selectedIndex - 1] {
             parts.append(category)
         }
-        if countryPopup.indexOfSelectedItem > 0, let country = countries[safe: countryPopup.indexOfSelectedItem - 1] {
+        if countryPopup.selectedIndex > 0, let country = countries[safe: countryPopup.selectedIndex - 1] {
             parts.append(Locale.current.localizedString(forRegionCode: country.uppercased()) ?? country)
         }
         if !searchField.stringValue.isEmpty {
@@ -379,8 +378,8 @@ final class ChannelPanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NS
 
     @objc private func tabChanged(_ sender: NSSegmentedControl) {
         tab = Tab(rawValue: sender.selectedSegment) ?? .all
-        categoryPopup.selectItem(at: 0)
-        countryPopup.selectItem(at: 0)
+        categoryPopup.select(index: 0, notify: false)
+        countryPopup.select(index: 0, notify: false)
         reload()
         table.scrollRowToVisible(0)
         revealPlaying()

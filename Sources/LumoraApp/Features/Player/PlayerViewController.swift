@@ -23,6 +23,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     var channelDigitWork: DispatchWorkItem?
     var channelSkipWork: DispatchWorkItem?
     var controlsLeadingForPanel: NSLayoutConstraint!
+    var liveTVUnloadWork: DispatchWorkItem?
+    var continueChannelCancellable: AnyCancellable?
     var bannerLeadingForPanel: NSLayoutConstraint!
     private lazy var pictureInPicture = makePictureInPicture()
     private var hasPictureInPicture = false
@@ -236,12 +238,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         miniControls.onClose = { [weak self] in self?.view.window?.performClose(nil) }
         emptyState.onOpenFile = { [weak self] in self?.chooseFiles() }
         emptyState.onLiveTV = { [weak self] in self?.setChannelPanel(visible: true) }
-        emptyState.onContinueChannel = { [weak self] in
-            guard let self, let channel = ChannelStore.shared.lastWatched else { return }
-            self.liveTV.ring = ChannelStore.shared.recentChannels
-            self.liveTV.ringTitle = "Recent"
-            self.tune(to: channel)
-        }
+        emptyState.onContinueChannel = { [weak self] in self?.continueLastChannel() }
         emptyState.onOpenURL = { [weak self] in self?.windowController?.promptForURL() }
         emptyState.onOpenRecent = { [weak self] url in self?.windowController?.open([url]) }
     }
@@ -411,6 +408,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             guard let self else { return }
             if item.kind != .channel {
                 self.liveTV.direction = 0
+                self.scheduleLiveTVUnload()
                 self.controls.setChannelMode(false)
                 self.channelBanner.hide()
                 self.channelPanel.playingKey = nil
@@ -620,7 +618,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         emptyState.isHidden = !showEmpty
         if showEmpty {
             emptyState.setRecent(library.continueWatching(limit: 4).filter { $0.url.isFileURL })
-            emptyState.setLastChannel(ChannelStore.shared.lastWatched?.name)
+            emptyState.setLastChannel(ChannelStore.lastChannelName)
+            scheduleLiveTVUnload()
             titleBar.title = ""
             view.window?.title = "Lumora"
         }

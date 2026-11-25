@@ -189,6 +189,31 @@ enum Form {
         return field
     }
 
+    /// Like `popup`, for long lists: type to find, and the list opens at a fixed height.
+    static func searchableChoice<Value: Equatable>(
+        _ options: [(String, Value)],
+        _ get: @escaping () -> Value,
+        _ set: @escaping (Value) -> Void
+    ) -> NSView {
+        let box = SearchableChoice()
+        box.setOptions(options.map(\.0), selected: options.firstIndex { $0.1 == get() } ?? 0)
+        box.onSelect = { index in
+            if options.indices.contains(index) { set(options[index].1) }
+        }
+        box.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        let holder = RefreshableHolder()
+        holder.refresh = { [weak box] in box?.select(index: options.firstIndex { $0.1 == get() } ?? 0, notify: false) }
+        holder.addSubview(box)
+        NSLayoutConstraint.activate([
+            box.leadingAnchor.constraint(equalTo: holder.leadingAnchor),
+            box.trailingAnchor.constraint(equalTo: holder.trailingAnchor),
+            box.topAnchor.constraint(equalTo: holder.topAnchor),
+            box.bottomAnchor.constraint(equalTo: holder.bottomAnchor)
+        ])
+        holder.translatesAutoresizingMaskIntoConstraints = false
+        return holder
+    }
+
     /// Colour picker bound to a "#RRGGBB" string.
     static func colorWell(_ get: @escaping () -> String, _ set: @escaping (String) -> Void) -> NSColorWell {
         let well = BoundColorWell(style: .default)
@@ -353,6 +378,10 @@ final class BoundSecureTextField: BoundTextField {
         get { NSSecureTextFieldCell.self }
         set {}
     }
+}
+
+final class RefreshableHolder: NSView, Refreshable {
+    var refresh: (() -> Void)?
 }
 
 final class BoundColorWell: NSColorWell, Refreshable {

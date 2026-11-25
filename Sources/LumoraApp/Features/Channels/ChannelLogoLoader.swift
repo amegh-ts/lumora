@@ -24,6 +24,12 @@ final class ChannelLogoLoader {
         memory.countLimit = 400
     }
 
+    /// Frees logos held in memory (they stay in the disk cache).
+    func purgeMemory() {
+        memory.removeAllObjects()
+        failed.removeAll()
+    }
+
     func cached(_ url: URL) -> NSImage? {
         memory.object(forKey: url as NSURL)
     }

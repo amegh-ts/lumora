@@ -19,7 +19,7 @@ extension PlayerViewController: ChannelPanelDelegate {
     // MARK: Panel
 
     func installLiveTV() {
-        ChannelStore.shared.loadIfNeeded()
+        // Nothing loads at launch: Live TV reads its lists only when opened or used.
         channelPanel.delegate = self
         channelPanel.isHidden = true
         channelBanner.onStar = { [weak self] in self?.toggleCurrentFavourite() }
@@ -37,6 +37,7 @@ extension PlayerViewController: ChannelPanelDelegate {
             channelPanel.prepareToShow()
         }
         channelPanel.isHidden = !visible
+        scheduleLiveTVUnload()
         controlsLeadingForPanel.isActive = visible
         // The banner moves beside the panel instead of covering it.
         bannerLeadingForPanel.isActive = visible
@@ -125,6 +126,47 @@ extension PlayerViewController: ChannelPanelDelegate {
         let previous = index.flatMap { ring.isEmpty ? nil : ring[($0 - 1 + ring.count) % ring.count].name }
         let next = index.flatMap { ring.isEmpty ? nil : ring[($0 + 1) % ring.count].name }
         controls.setChannelMode(true, previousName: previous, nextName: next)
+    }
+
+    /// When the panel is closed and no channel is playing, drop the lists from memory after a
+    /// minute; reopening reads them back from disk.
+    func scheduleLiveTVUnload() {
+        liveTVUnloadWork?.cancel()
+        guard !isChannelPanelVisible, !isWatchingChannel, ChannelStore.shared.isLoaded else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.isChannelPanelVisible, !self.isWatchingChannel else { return }
+            self.liveTV.ring = []
+            self.channelPanel.clear()
+            ChannelStore.shared.unload()
+            ChannelLogoLoader.shared.purgeMemory()
+            PlaybackEngine.releaseFreeMemory(after: 0.5)
+        }
+        liveTVUnloadWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60, execute: work)
+    }
+
+    /// Empty screen "Continue watching": loads Live TV, then tunes once the lists are in.
+    func continueLastChannel() {
+        guard let key = ChannelStore.lastChannelKey else { return }
+        let store = ChannelStore.shared
+        store.loadIfNeeded()
+        if let channel = store.channel(forKey: key) {
+            liveTV.ring = store.recentChannels
+            liveTV.ringTitle = "Recent"
+            tune(to: channel)
+            return
+        }
+        osd.show("Loading channels…", symbol: "tv", duration: 2)
+        continueChannelCancellable = store.$all
+            .filter { !$0.isEmpty }
+            .first()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self, let channel = store.channel(forKey: key) else { return }
+                self.liveTV.ring = store.recentChannels
+                self.liveTV.ringTitle = "Recent"
+                self.tune(to: channel)
+            }
     }
 
     // MARK: Number entry

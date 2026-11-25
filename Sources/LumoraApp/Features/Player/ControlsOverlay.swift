@@ -168,7 +168,8 @@ final class ControlsOverlay: NSView {
         volumeSlider.isHidden = width < 520
         speedButton.isHidden = width < 460
         audioButton.isHidden = width < 430
-        playlistButton.isHidden = width < 400
+        // Live TV has its own channel panel; the playlist of files doesn't apply.
+        playlistButton.isHidden = width < 400 || channelMode
     }
 
     var isInteracting: Bool {

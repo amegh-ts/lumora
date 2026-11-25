@@ -54,6 +54,23 @@ final class ChannelStore: ObservableObject {
 
     // MARK: Loading
 
+    /// Last channel watched, kept outside the lists so the empty screen can offer it without
+    /// loading Live TV.
+    static var lastChannelName: String? { UserDefaults.standard.string(forKey: "lumora.tv.lastChannelName") }
+    static var lastChannelKey: String? { UserDefaults.standard.string(forKey: "lumora.tv.lastChannelKey") }
+    var isLoaded: Bool { loaded }
+
+    /// Frees the channel lists after Live TV is closed; they reload from disk when needed again.
+    func unload() {
+        guard loaded, loadingSources.isEmpty else { return }
+        loaded = false
+        channelsBySource = [:]
+        sources = []
+        favourites = []
+        recent = []
+        unavailable = []
+    }
+
     /// Reads saved lists (off the main thread) and refreshes any older than a day.
     func loadIfNeeded() {
         guard !loaded else { return }
@@ -282,6 +299,8 @@ final class ChannelStore: ObservableObject {
     var recentChannels: [Channel] { recent.compactMap { byKey[$0] } }
 
     func markWatched(_ channel: Channel) {
+        UserDefaults.standard.set(channel.name, forKey: "lumora.tv.lastChannelName")
+        UserDefaults.standard.set(channel.key, forKey: "lumora.tv.lastChannelKey")
         unavailable.remove(channel.key)
         recent.removeAll { $0 == channel.key }
         recent.insert(channel.key, at: 0)
