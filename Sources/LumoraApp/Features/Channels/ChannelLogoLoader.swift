@@ -80,10 +80,7 @@ final class ChannelLogoLoader {
         }
         var request = URLRequest(url: url, timeoutInterval: 15)
         request.setValue("Lumora", forHTTPHeaderField: "User-Agent")
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-            (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? false,
-            data.count <= maxBytes,
-            let image = NSImage(data: data)
+        guard case .success(let data) = await CappedDownload.data(for: request, maxBytes: maxBytes), let image = NSImage(data: data)
         else { return nil }
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try? data.write(to: file, options: .atomic)

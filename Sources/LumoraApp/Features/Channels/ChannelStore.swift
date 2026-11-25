@@ -184,14 +184,11 @@ final class ChannelStore: ObservableObject {
         } else {
             var request = URLRequest(url: url, timeoutInterval: 30)
             request.setValue("Lumora", forHTTPHeaderField: "User-Agent")
-            do {
-                let (downloaded, response) = try await URLSession.shared.data(for: request)
-                if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                    return .failure(.network("HTTP \(http.statusCode)"))
-                }
-                data = downloaded
-            } catch {
-                return .failure(.network(error.localizedDescription))
+            switch await CappedDownload.data(for: request, maxBytes: maxListBytes) {
+            case .success(let downloaded): data = downloaded
+            case .failure(.tooLarge): return .failure(.tooLarge)
+            case .failure(.http(let code)): return .failure(.network("HTTP \(code)"))
+            case .failure(.network(let reason)): return .failure(.network(reason))
             }
         }
         guard data.count <= maxListBytes else { return .failure(.tooLarge) }
