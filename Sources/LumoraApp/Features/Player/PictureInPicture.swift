@@ -45,8 +45,15 @@ final class PictureInPicture: NSObject, AVPictureInPictureControllerDelegate, AV
         displayLayer.controlTimebase = created
     }
 
+    /// AVKit sizes its PiP host from this layer; a zero or NaN size makes it crash, so never
+    /// leave it empty.
     func layout() {
-        displayLayer.frame = hostView.bounds
+        let bounds = hostView.bounds
+        let valid = bounds.width >= 1 && bounds.height >= 1 && bounds.width.isFinite && bounds.height.isFinite
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        displayLayer.frame = valid ? bounds : CGRect(x: 0, y: 0, width: 480, height: 270)
+        CATransaction.commit()
     }
 
     /// `dryRun` (DEBUG tests): render frames but don't open the floating window.
@@ -55,25 +62,23 @@ final class PictureInPicture: NSObject, AVPictureInPictureControllerDelegate, AV
         isActive = true
         onActiveChange?(true)
         hostView.isHidden = false
+        hostView.superview?.layoutSubtreeIfNeeded()
         layout()
         syncTimebase()
 
         let renderer = SoftwareFrameRenderer(mpv: engine.handle, layer: displayLayer)
         self.renderer = renderer
+        // AVKit derives its window geometry from the video's size; with no frame yet that's 0/0
+        // and it crashes on a NaN frame. Create the controller once a frame is on the layer.
+        if !dryRun {
+            renderer.onFirstFrame = { [weak self] in
+                MainActor.assumeIsolated { self?.createController() }
+            }
+        }
         renderer.start(size: CGSize(width: 960, height: 540))
         engine.beginSoftwareOutput()
         if dryRun { return }
 
-        let source = AVPictureInPictureController.ContentSource(sampleBufferDisplayLayer: displayLayer, playbackDelegate: self)
-        let controller = AVPictureInPictureController(contentSource: source)
-        controller.delegate = self
-        self.controller = controller
-        // PiP can start once the layer has shown a frame; give up after a few seconds.
-        possibleObservation = controller.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { [weak self] _, _ in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.startWhenPossible() }
-            }
-        }
         let timeout = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.controller?.isPictureInPictureActive != true else { return }
@@ -82,6 +87,19 @@ final class PictureInPicture: NSObject, AVPictureInPictureControllerDelegate, AV
         }
         startWork = timeout
         DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: timeout)
+    }
+
+    private func createController() {
+        guard isActive, controller == nil else { return }
+        let source = AVPictureInPictureController.ContentSource(sampleBufferDisplayLayer: displayLayer, playbackDelegate: self)
+        let controller = AVPictureInPictureController(contentSource: source)
+        controller.delegate = self
+        self.controller = controller
+        possibleObservation = controller.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { [weak self] _, _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.startWhenPossible() }
+            }
+        }
     }
 
     private func startWhenPossible() {
@@ -183,6 +201,12 @@ final class PictureInPicture: NSObject, AVPictureInPictureControllerDelegate, AV
     ) {
         MainActor.assumeIsolated {
             engine.skip(skipInterval.seconds)
+            // AVKit expects the timebase at the new position when the completion runs.
+            if let timebase {
+                let target = max(0, engine.currentTime + skipInterval.seconds)
+                let bounded = engine.duration > 0 ? min(target, engine.duration) : target
+                CMTimebaseSetTime(timebase, time: CMTime(seconds: bounded, preferredTimescale: 600))
+            }
         }
         completionHandler()
     }
@@ -200,6 +224,8 @@ final class SoftwareFrameRenderer: @unchecked Sendable {
     private var size = CGSize(width: 960, height: 540)
     private var format: CMVideoFormatDescription?
     private(set) var frameCount = 0
+    /// Called on the main thread after the first frame has been enqueued.
+    var onFirstFrame: (@Sendable () -> Void)?
     private var lastBuffer: CVPixelBuffer?
 
     init(mpv: OpaquePointer, layer: AVSampleBufferDisplayLayer) {
@@ -301,11 +327,13 @@ final class SoftwareFrameRenderer: @unchecked Sendable {
         lastBuffer = buffer
         guard let sample = makeSample(buffer) else { return }
         let layer = self.layer
+        let first = frameCount == 1 ? onFirstFrame : nil
         DispatchQueue.main.async {
             if layer.status == .failed {
                 layer.flush()
             }
             layer.enqueue(sample)
+            first?()
         }
     }
 
