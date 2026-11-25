@@ -100,6 +100,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// Plays channels from the Channels window; they replace the active window's playlist.
+    func playChannels(_ items: [PlaybackItem], startAt index: Int) {
+        activeController().playChannels(items, startAt: index)
+        Self.activateApp()
+    }
+
+    @objc func showChannels(_ sender: Any?) {
+        ChannelsWindowController.shared.showWindow(sender)
+        Self.activateApp()
+    }
+
+    @objc func addChannelList(_ sender: Any?) {
+        ChannelsWindowController.shared.promptForList()
+        Self.activateApp()
+    }
+
     func openInActivePlayer(_ urls: [URL]) {
         activeController().open(urls)
         Self.activateApp()

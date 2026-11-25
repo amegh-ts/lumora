@@ -9,6 +9,8 @@ enum RepeatMode: String, Codable, CaseIterable {
 enum PlaybackKind: String, Codable {
     case local
     case network
+    /// A live TV channel from a channel list: no resume, no skipping on errors.
+    case channel
 }
 
 struct PlaybackItem: Codable, Identifiable, Hashable {
@@ -16,12 +18,17 @@ struct PlaybackItem: Codable, Identifiable, Hashable {
     var url: URL
     var title: String
     var kind: PlaybackKind
+    /// Some streams only answer a particular browser identity or referring page (#EXTVLCOPT).
+    var userAgent: String?
+    var referrer: String?
 
-    init(url: URL, title: String? = nil, kind: PlaybackKind? = nil) {
+    init(url: URL, title: String? = nil, kind: PlaybackKind? = nil, userAgent: String? = nil, referrer: String? = nil) {
         self.id = UUID()
         self.url = url
         self.kind = kind ?? (url.isFileURL ? .local : .network)
         self.title = title ?? Self.defaultTitle(for: url)
+        self.userAgent = userAgent
+        self.referrer = referrer
     }
 
     private static func defaultTitle(for url: URL) -> String {

@@ -51,6 +51,51 @@ enum DebugMode {
                 NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0.5)
                 return
             }
+            // LUMORA_CHANNELS_TEST="url|/path/shot.png" → add a channel list (not saved), show
+            // Channels, then save a picture of the window and print counts.
+            if let entry = environment["LUMORA_CHANNELS_TEST"] {
+                let parts = entry.split(separator: "|").map(String.init)
+                if let url = URL(string: parts[0]) {
+                    ChannelStore.shared.loadIfNeeded()
+                    let id = ChannelStore.shared.addSource(url: url, name: "iptv-org")
+                    ChannelsWindowController.shared.show(source: id)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
+                        let store = ChannelStore.shared
+                        let channels = store.channelsBySource[id] ?? []
+                        let groups = Set(channels.map(\.group)).count
+                        let withAgent = channels.filter { $0.userAgent != nil || $0.referrer != nil }.count
+                        print(
+                            "[debug] channels=\(channels.count) groups=\(groups) headers=\(withAgent) countries=\(Set(channels.compactMap(\.country)).count) error=\(store.sources.first?.lastError ?? "-")"
+                        )
+                        if parts.count > 1, let window = ChannelsWindowController.shared.window, let frameView = window.contentView?.superview,
+                            let rep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds)
+                        {
+                            frameView.cacheDisplay(in: frameView.bounds, to: rep)
+                            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: parts[1]))
+                        }
+                        // LUMORA_CHANNELS_PLAY="plain" or "headers": play such a channel and report.
+                        if let kind = environment["LUMORA_CHANNELS_PLAY"] {
+                            let pick = channels.first { $0.name.hasPrefix(kind) }
+                            if let pick {
+                                print("[debug] playing \(pick.name) ua=\(pick.userAgent ?? "-") ref=\(pick.referrer ?? "-")")
+                                (NSApp.delegate as? AppDelegate)?.playChannels([pick.playbackItem], startAt: 0)
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
+                                if let player = NSApp.windows.compactMap({ $0.contentViewController as? PlayerViewController }).first {
+                                    let engine = player.engine
+                                    print(
+                                        "[debug] channel playing=\(engine.isPlaying) live=\(engine.isLive) size=\(engine.videoSize) status=\(engine.statusMessage) t=\(engine.currentTime)"
+                                    )
+                                }
+                                NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0.5)
+                            }
+                            return
+                        }
+                        NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0.5)
+                    }
+                }
+                return
+            }
             // LUMORA_WINDOW_SHOTS=dir LUMORA_WINDOWS="showLibrary:,convertMedia:" → open each window
             // through its app action and save a picture of it.
             if let directory = environment["LUMORA_WINDOW_SHOTS"] {

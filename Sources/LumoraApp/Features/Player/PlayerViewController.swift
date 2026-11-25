@@ -376,6 +376,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         }
         engine.onLoad = { [weak self] item in
             guard let self else { return }
+            if item.kind == .channel {
+                ChannelStore.shared.markWatched(item.url)
+            }
             self.lastSavedTime = 0
             self.watchedMarked = false
             self.resizedForCurrentFile = false
@@ -405,6 +408,14 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             self.emptyState.setError(message)
             self.pendingSubtitles = []
             self.refreshEmptyState()
+            // A dead channel stays put: skipping would race through thousands of channels.
+            if self.playlist.current?.kind == .channel {
+                self.emptyState.setError(
+                    "“\(self.playlist.current?.title ?? "This channel")” isn't available right now. Free channels often go offline or are blocked in some countries. Try another one with ⌘→ or the Channels window."
+                )
+                self.osd.show("Channel unavailable", symbol: "antenna.radiowaves.left.and.right.slash", duration: 2.5)
+                return
+            }
             let hasNext = (self.playlist.currentIndex ?? 0) + 1 < self.playlist.items.count
             if hasNext {
                 self.osd.show("Couldn't play — skipping to next", symbol: "exclamationmark.triangle.fill", duration: 2)
@@ -701,6 +712,11 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
     private func handleFinish() {
         guard let item = engine.currentItem else { return }
+        // A live channel that stops has dropped out; don't mark it watched or move on.
+        if item.kind == .channel {
+            osd.show("The channel stopped broadcasting", symbol: "antenna.radiowaves.left.and.right.slash", duration: 2.5)
+            return
+        }
         if !watchedMarked {
             watchedMarked = true
             library.markWatched(url: item.url, title: item.title, duration: engine.duration)
