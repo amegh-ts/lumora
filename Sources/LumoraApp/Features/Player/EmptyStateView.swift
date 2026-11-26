@@ -16,6 +16,7 @@ final class EmptyStateView: NSView {
     private let recentStack = NSStackView()
     private let recentHeader = HUD.label(size: 11, weight: .semibold, color: HUD.secondaryText)
     private let errorCard = NSView()
+    private let hintLabel = HUD.label(size: 11, color: HUD.secondaryText.withAlphaComponent(0.8))
     private var isDropTarget = false {
         didSet { needsDisplay = true }
     }
@@ -79,6 +80,8 @@ final class EmptyStateView: NSView {
         continueChannelButton.action = #selector(continueChannel)
         continueChannelButton.isHidden = true
         let buttons = NSStackView(views: [openButton, urlButton, tvButton])
+        hintLabel.stringValue = "⌘O Open   ·   ⌘U Link   ·   ⇧⌘T Live TV   ·   ⌘/ Shortcuts"
+        hintLabel.alignment = .center
         buttons.spacing = 10
 
         recentHeader.stringValue = "CONTINUE WATCHING"
@@ -86,13 +89,14 @@ final class EmptyStateView: NSView {
         recentStack.alignment = .top
         recentStack.spacing = 12
 
-        let stack = NSStackView(views: [iconView, titleLabel, subtitleLabel, errorCard, buttons, continueChannelButton, recentHeader, recentStack])
+        let stack = NSStackView(views: [iconView, titleLabel, subtitleLabel, errorCard, buttons, hintLabel, continueChannelButton, recentHeader, recentStack])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 10
         stack.setCustomSpacing(18, after: iconView)
         stack.setCustomSpacing(20, after: errorCard)
-        stack.setCustomSpacing(30, after: buttons)
+        stack.setCustomSpacing(8, after: buttons)
+        stack.setCustomSpacing(26, after: hintLabel)
         stack.setCustomSpacing(6, after: recentHeader)
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)

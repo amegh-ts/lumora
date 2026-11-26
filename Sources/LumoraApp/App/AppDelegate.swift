@@ -19,10 +19,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DebugHarness.run { [weak self] urls in self?.activeController().open(urls) }
         #endif
         Updater.shared.start(settings: SettingsStore.shared)
-        // After the window is up, offer to send a report if Lumora crashed last time.
+        // After the window is up: a crash report from last time, else the one-time offer to
+        // become the default video player.
         if !DebugMode.background {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                 CrashReporter.offerToSendPendingReport()
+                DefaultPlayer.offerIfFirstLaunch(in: self?.activeController().window)
             }
         }
     }

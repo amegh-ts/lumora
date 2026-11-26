@@ -101,6 +101,31 @@ enum DebugMode {
                 }
                 return
             }
+            // LUMORA_CONVERT_TEST="in|out" → convert with the first preset, printing progress.
+            if let entry = environment["LUMORA_CONVERT_TEST"] {
+                let parts = entry.split(separator: "|").map(String.init)
+                if parts.count == 2 {
+                    Task { @MainActor in
+                        var updates = 0
+                        let message = await ConverterService.convert(
+                            input: URL(fileURLWithPath: parts[0]), output: URL(fileURLWithPath: parts[1]),
+                            preset: ConverterService.presets[0], ffmpegPath: "/opt/homebrew/bin/ffmpeg", overwrite: true
+                        ) { update in
+                            updates += 1
+                            if updates % 3 == 1 || update.fraction == 1 {
+                                defer { fflush(stdout) }
+                                print(
+                                    "[debug] convert \(update.fraction.map { String(format: "%.0f%%", $0 * 100) } ?? "-") speed=\(update.speed ?? -1) left=\(update.secondsLeft.map { String(format: "%.0fs", $0) } ?? "-")"
+                                )
+                            }
+                        }
+                        print("[debug] convert done error=\(message ?? "none") updates=\(updates)")
+                        fflush(stdout)
+                        exit(0)
+                    }
+                }
+                return
+            }
             // LUMORA_WINDOW_SHOTS=dir LUMORA_WINDOWS="showLibrary:,convertMedia:" → open each window
             // through its app action and save a picture of it.
             if let directory = environment["LUMORA_WINDOW_SHOTS"] {

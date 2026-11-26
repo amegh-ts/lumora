@@ -131,6 +131,11 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         spinner.appearance = NSAppearance(named: .darkAqua)
         sidebar.isHidden = true
         sidebar.delegate = self
+        sidebar.durationFor = { [weak self] item in
+            guard let self else { return nil }
+            if item.id == self.engine.currentItem?.id, self.engine.duration > 0, !self.engine.isLive { return self.engine.duration }
+            return self.library.record(for: item.url)?.duration
+        }
         audioArtwork.isHidden = true
         miniControls.isHidden = true
         miniControls.alphaValue = 0
@@ -452,6 +457,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             guard let self else { return }
             if item.kind == .channel {
                 self.channelDidLoad()
+            }
+            if !self.sidebar.isHidden {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.sidebar.reload() }
             }
             self.applySettings()
             NowPlayingService.shared.playerDidChange(self)

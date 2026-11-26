@@ -229,10 +229,18 @@ private final class ConverterViewController: NSViewController {
         }
         setConverting(true)
         statusField.stringValue = "Converting \(source.lastPathComponent)…"
+        let name = source.lastPathComponent
         Task { @MainActor in
             let message = await ConverterService.convert(
-                input: source, output: destination, preset: preset, ffmpegPath: ffmpeg, overwrite: destinationConfirmed)
+                input: source, output: destination, preset: preset, ffmpegPath: ffmpeg, overwrite: destinationConfirmed
+            ) { [weak self] update in
+                self?.show(update, name: name)
+            }
             setConverting(false)
+            // Finished while you were elsewhere: bounce the Dock icon once.
+            if !NSApp.isActive {
+                NSApp.requestUserAttention(.informationalRequest)
+            }
             if let message {
                 statusField.stringValue = message.contains("cancel") ? "Cancelled." : "Couldn't convert: \(message)"
             } else {
@@ -240,6 +248,24 @@ private final class ConverterViewController: NSViewController {
                 revealButton.isHidden = false
             }
         }
+    }
+
+    /// "Converting movie.mkv · 42% · 3 min left · 2.1× speed", with a filling bar.
+    private func show(_ update: ConverterService.Progress, name: String) {
+        guard isConverting else { return }
+        var parts = ["Converting \(name)"]
+        if let fraction = update.fraction {
+            progress.isIndeterminate = false
+            progress.doubleValue = fraction
+            parts.append("\(Int((fraction * 100).rounded()))%")
+        }
+        if let left = update.secondsLeft, left.isFinite {
+            parts.append(left < 60 ? "less than a minute left" : "\(Int((left / 60).rounded())) min left")
+        }
+        if let speed = update.speed, speed > 0 {
+            parts.append(String(format: "%.1f× speed", speed))
+        }
+        statusField.stringValue = parts.joined(separator: " · ")
     }
 
     private func setConverting(_ converting: Bool) {
@@ -250,6 +276,9 @@ private final class ConverterViewController: NSViewController {
         dropZone.isEnabled = !converting
         revealButton.isHidden = true
         if converting {
+            progress.isIndeterminate = true
+            progress.minValue = 0
+            progress.maxValue = 1
             progress.startAnimation(nil)
         } else {
             progress.stopAnimation(nil)
