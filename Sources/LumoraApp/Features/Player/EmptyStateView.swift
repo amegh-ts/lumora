@@ -85,9 +85,9 @@ final class EmptyStateView: NSView {
         buttons.spacing = 10
 
         recentHeader.stringValue = "CONTINUE WATCHING"
-        recentStack.orientation = .horizontal
-        recentStack.alignment = .top
-        recentStack.spacing = 12
+        recentStack.orientation = .vertical
+        recentStack.alignment = .leading
+        recentStack.spacing = 2
 
         let stack = NSStackView(views: [iconView, titleLabel, subtitleLabel, errorCard, buttons, hintLabel, continueChannelButton, recentHeader, recentStack])
         stack.orientation = .vertical
@@ -145,17 +145,15 @@ final class EmptyStateView: NSView {
         recentHeader.isHidden = items.isEmpty
         recentStack.isHidden = items.isEmpty
         for record in items {
-            let card = RecentCard(record: record)
+            let progress = record.duration > 0 ? Int((record.resumeTime / record.duration * 100).rounded()) : 0
+            let button = RecentRowButton(
+                title: record.title,
+                detail: "\(TimeFormatter.string(record.resumeTime)) of \(TimeFormatter.string(record.duration)) · \(progress)%"
+            )
             let url = record.url
-            card.onClick = { [weak self] in self?.onOpenRecent?(url) }
-            recentStack.addArrangedSubview(card)
+            button.onClick = { [weak self] in self?.onOpenRecent?(url) }
+            recentStack.addArrangedSubview(button)
         }
-        loadThumbnails(recentStack.arrangedSubviews.compactMap { $0 as? RecentCard })
-    }
-
-    private func loadThumbnails(_ cards: [RecentCard]) {
-        guard let first = cards.first else { return }
-        first.loadThumbnail { [weak self] in self?.loadThumbnails(Array(cards.dropFirst())) }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -179,89 +177,41 @@ final class EmptyStateView: NSView {
     }
 }
 
-/// A Continue Watching card: a frame from the video, its title, time left and progress.
 @MainActor
-private final class RecentCard: NSView {
+private final class RecentRowButton: NSView {
     var onClick: (() -> Void)?
-    private let thumbnail = NSImageView()
     private var trackingArea: NSTrackingArea?
-    private var hovering = false {
-        didSet { layer?.backgroundColor = NSColor.white.withAlphaComponent(hovering ? 0.12 : 0.06).cgColor }
-    }
 
-    init(record: LibraryRecord) {
-        self.record = record
+    init(title: String, detail: String) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.cornerRadius = 10
-        layer?.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
-
-        thumbnail.imageScaling = .scaleNone
-        thumbnail.wantsLayer = true
-        thumbnail.layer?.cornerRadius = 6
-        thumbnail.layer?.masksToBounds = true
-        thumbnail.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.05).cgColor
-        thumbnail.image = NSImage(systemSymbolName: record.url.isFileURL ? "film" : "globe", accessibilityDescription: nil)
-        thumbnail.symbolConfiguration = .init(pointSize: 22, weight: .light)
-        thumbnail.contentTintColor = HUD.secondaryText
-
-        let title = HUD.label(size: 12, weight: .semibold)
-        title.stringValue = record.title
-        title.lineBreakMode = .byTruncatingTail
-        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let left = max(0, record.duration - record.resumeTime)
-        let detail = HUD.label(size: 10.5, color: HUD.secondaryText, monospaced: true)
-        detail.stringValue = "\(TimeFormatter.string(left)) left"
-        let progress = NSProgressIndicator()
-        progress.style = .bar
-        progress.controlSize = .mini
-        progress.isIndeterminate = false
-        progress.minValue = 0
-        progress.maxValue = 1
-        progress.doubleValue = record.duration > 0 ? min(max(record.resumeTime / record.duration, 0), 1) : 0
-
-        let stack = NSStackView(views: [thumbnail, title, detail, progress])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 4
-        stack.setCustomSpacing(8, after: thumbnail)
+        layer?.cornerRadius = 8
+        let icon = NSImageView(image: HUD.symbol("play.circle", size: 15) ?? NSImage())
+        icon.contentTintColor = HUD.secondaryText
+        // The icon keeps its size; a long title truncates instead of pushing it out.
+        icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+        let titleLabel = HUD.label(size: 13, weight: .medium)
+        titleLabel.stringValue = title
+        titleLabel.lineBreakMode = .byTruncatingMiddle
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let detailLabel = HUD.label(size: 11.5, color: HUD.secondaryText, monospaced: true)
+        detailLabel.stringValue = detail
+        detailLabel.setContentHuggingPriority(.required, for: .horizontal)
+        let stack = NSStackView(views: [icon, titleLabel, detailLabel])
+        stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 170),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
-            thumbnail.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            thumbnail.heightAnchor.constraint(equalTo: thumbnail.widthAnchor, multiplier: 9.0 / 16.0),
-            title.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor),
-            progress.widthAnchor.constraint(equalTo: stack.widthAnchor)
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            widthAnchor.constraint(equalToConstant: 420)
         ])
-        setAccessibilityElement(true)
         setAccessibilityRole(.button)
-        setAccessibilityLabel("Resume \(record.title), \(TimeFormatter.string(left)) left")
-
-    }
-
-    let record: LibraryRecord
-
-    /// A frame from where you stopped (local files only; streams keep the icon). The thumbnail
-    /// service handles one request at a time, so cards load one after another.
-    func loadThumbnail(then next: @escaping () -> Void) {
-        guard record.url.isFileURL, record.duration > 0 else {
-            next()
-            return
-        }
-        ThumbnailService.shared.request(url: record.url, time: record.resumeTime, duration: record.duration) { [weak self] image in
-            if let self, let image {
-                self.thumbnail.imageScaling = .scaleProportionallyUpOrDown
-                self.thumbnail.symbolConfiguration = nil
-                self.thumbnail.image = image
-            }
-            next()
-        }
+        setAccessibilityLabel("Resume \(title)")
     }
 
     required init?(coder: NSCoder) {
@@ -280,18 +230,34 @@ private final class RecentCard: NSView {
         trackingArea = area
     }
 
-    override func mouseEntered(with event: NSEvent) { hovering = true }
-    override func mouseExited(with event: NSEvent) { hovering = false }
+    override func mouseEntered(with event: NSEvent) {
+        layer?.backgroundColor = NSColor.white.withAlphaComponent(0.08).cgColor
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
     override func mouseDown(with event: NSEvent) {}
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func accessibilityPerformPress() -> Bool {
+        onClick?()
+        return true
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 36 || event.keyCode == 49 {
+            onClick?()
+        } else {
+            super.keyDown(with: event)
+        }
+    }
 
     override func mouseUp(with event: NSEvent) {
         if bounds.contains(convert(event.locationInWindow, from: nil)) {
             onClick?()
         }
-    }
-
-    override func accessibilityPerformPress() -> Bool {
-        onClick?()
-        return true
     }
 }
