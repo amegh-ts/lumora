@@ -1528,6 +1528,12 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         pictureInPicture.start()
     }
 
+    #if DEBUG
+        func debugPictureInPictureThreads() {
+            pictureInPicture.debugCallbacksFromBackground { line in print("[debug] pip \(line)") }
+        }
+    #endif
+
     /// DEBUG test hook: runs the PiP frame pipeline without the floating window.
     func debugPictureInPicture(start: Bool, frameFile: URL?) -> String {
         if start {

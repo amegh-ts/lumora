@@ -214,6 +214,12 @@ enum DebugMode {
                     }
                 }
             }
+            // LUMORA_PIP_THREADS=4 → call the PiP delegate from a background queue (#50).
+            if let delay = environment["LUMORA_PIP_THREADS"].flatMap(Double.init) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    NSApp.windows.compactMap { $0.contentViewController as? PlayerViewController }.first?.debugPictureInPictureThreads()
+                }
+            }
             // LUMORA_CROP="2:2.35" → at 2 s crop to 2.35:1 and reshape the window.
             if let entry = environment["LUMORA_CROP"] {
                 let parts = entry.split(separator: ":").compactMap { Double($0) }
