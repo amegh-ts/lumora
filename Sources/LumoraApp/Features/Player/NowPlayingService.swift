@@ -135,9 +135,18 @@ final class NowPlayingService {
                 self.artworkItemID = nil
                 return
             }
-            self.artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            self.artwork = Self.makeArtwork(image)
             self.publish(force: true)
         }
+    }
+
+    /// MediaPlayer asks for the picture on its own background queue. A closure written in this
+    /// main-actor class would be main-actor-isolated, and Swift 6 traps when it runs elsewhere
+    /// (crash in _dispatch_assert_queue_fail from -[MPMediaItemArtwork jpegDataWithSize:]), so
+    /// the handler is built here, outside the actor, around an immutable image.
+    nonisolated private static func makeArtwork(_ image: NSImage) -> MPMediaItemArtwork {
+        let box = ArtworkImage(image: image)
+        return MPMediaItemArtwork(boundsSize: image.size) { @Sendable _ in box.image }
     }
 
     // MARK: - Remote commands
@@ -174,15 +183,27 @@ final class NowPlayingService {
         }
     }
 
-    /// MediaPlayer delivers commands on the main thread.
+    /// MediaPlayer normally delivers commands on the main thread; if it ever doesn't, the
+    /// command hops there instead of tripping Swift's main-actor check.
     private func target(
         _ command: MPRemoteCommand,
         _ handler: @escaping @MainActor (NowPlayingService, MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus
     ) {
-        command.addTarget { event in
-            MainActor.assumeIsolated {
-                handler(NowPlayingService.shared, event)
+        command.addTarget(handler: Self.commandHandler(handler))
+    }
+
+    nonisolated private static func commandHandler(
+        _ handler: @escaping @MainActor (NowPlayingService, MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus
+    ) -> (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus {
+        { event in
+            let box = CommandEvent(event: event)
+            if Thread.isMainThread {
+                return MainActor.assumeIsolated { handler(NowPlayingService.shared, box.event) }
             }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { _ = handler(NowPlayingService.shared, box.event) }
+            }
+            return .success
         }
     }
 
@@ -204,4 +225,16 @@ final class NowPlayingService {
         publish(force: true)
         return .success
     }
+}
+
+/// The artwork image, handed to MediaPlayer's queue; it is never changed after creation.
+private final class ArtworkImage: @unchecked Sendable {
+    let image: NSImage
+    init(image: NSImage) { self.image = image }
+}
+
+/// A remote-command event passed to the main actor; it isn't changed after delivery.
+private final class CommandEvent: @unchecked Sendable {
+    let event: MPRemoteCommandEvent
+    init(event: MPRemoteCommandEvent) { self.event = event }
 }
