@@ -100,7 +100,8 @@ enum CrashReporter {
         // generic system layers (AppKit layout, libsystem…), which usually says what went wrong.
         let generic: Set<String> = [
             "libsystem_kernel.dylib", "libsystem_c.dylib", "libsystem_pthread.dylib", "libdyld.dylib", "dyld", "libc++abi.dylib",
-            "libobjc.A.dylib", "libswiftCore.dylib", "AppKit", "Foundation", "CoreFoundation", "QuartzCore", "HIToolbox", "libdispatch.dylib"
+            "libobjc.A.dylib", "libswiftCore.dylib", "libswift_Concurrency.dylib", "AppKit", "Foundation", "CoreFoundation", "QuartzCore", "HIToolbox",
+            "libdispatch.dylib"
         ]
         let named = frames.compactMap { frame -> (image: String, symbol: String)? in
             let image = (frame["imageIndex"] as? Int).flatMap { images.indices.contains($0) ? images[$0] : nil } ?? "?"
