@@ -213,6 +213,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func promptForURL() {
         guard let window else { return }
         let alert = NSAlert()
+        alert.window.appearance = NSAppearance(named: .darkAqua)
         alert.messageText = "Open URL"
         alert.informativeText =
             "Paste a link to a video, a stream (HLS, RTSP, HTTP) or a page on YouTube and other sites. YouTube playlist links add every video."
@@ -226,7 +227,29 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         {
             field.stringValue = copied
         }
-        alert.accessoryView = field
+        var accessory: NSView = field
+        // The last few links, one click to fill the field.
+        let recent = Self.recentLinks
+        if !recent.isEmpty {
+            let menu = NSPopUpButton(frame: .zero, pullsDown: true)
+            menu.addItem(withTitle: "Recent Links")
+            for link in recent {
+                let item = ClosureMenuItem(link.count > 70 ? String(link.prefix(67)) + "…" : link) { [weak field] in
+                    field?.stringValue = link
+                }
+                item.toolTip = link
+                menu.menu?.addItem(item)
+            }
+            menu.controlSize = .small
+            let stack = NSStackView(views: [field, menu])
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 8
+            stack.frame = NSRect(x: 0, y: 0, width: 400, height: 56)
+            field.widthAnchor.constraint(equalToConstant: 400).isActive = true
+            accessory = stack
+        }
+        alert.accessoryView = accessory
         alert.addButton(withTitle: "Play")
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
@@ -238,10 +261,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                     self?.showInvalidURL(text)
                     return
                 }
+                Self.rememberLink(url.absoluteString)
                 self?.open([url])
             }
         }
         field.currentEditor()?.selectAll(nil)
+    }
+
+    private static let recentLinksKey = "lumora.recentLinks"
+    static var recentLinks: [String] { UserDefaults.standard.stringArray(forKey: recentLinksKey) ?? [] }
+
+    static func rememberLink(_ link: String) {
+        var links = recentLinks.filter { $0 != link }
+        links.insert(link, at: 0)
+        UserDefaults.standard.set(Array(links.prefix(8)), forKey: recentLinksKey)
     }
 
     /// A playable link from typed text: adds https:// to "youtube.com/…"-style input and accepts
@@ -295,6 +328,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             resume = record.resumeTime
         }
         engine.load(item, resumeTime: resume)
+        if resume > 30 {
+            playerViewController.noteResumed(at: resume)
+        }
     }
 
     func playNext(auto: Bool) {

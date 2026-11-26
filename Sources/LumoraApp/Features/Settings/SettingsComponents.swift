@@ -216,11 +216,13 @@ enum Form {
 
     /// Colour picker bound to a "#RRGGBB" string.
     static func colorWell(_ get: @escaping () -> String, _ set: @escaping (String) -> Void) -> NSColorWell {
-        let well = BoundColorWell(style: .default)
+        // The compact style: a colour swatch with a small menu, not the large white square.
+        let well = BoundColorWell(style: .minimal)
         well.color = NSColor(hex: get()) ?? .white
         well.onChange = { set($0.color.hexString) }
         well.refresh = { [weak well] in well?.color = NSColor(hex: get()) ?? .white }
-        well.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        well.widthAnchor.constraint(equalToConstant: 38).isActive = true
+        well.heightAnchor.constraint(equalToConstant: 22).isActive = true
         return well
     }
 

@@ -601,8 +601,12 @@ final class PlaybackEngine: ObservableObject {
         command(["seek", String(bounded), exact ? "absolute+exact" : "absolute+keyframes"])
     }
 
+    /// Every relative jump (keys, buttons, menus, media keys), for the on-screen skip ripple.
+    var onSkip: ((TimeInterval) -> Void)?
+
     func skip(_ seconds: TimeInterval) {
         guard hasMedia else { return }
+        onSkip?(seconds)
         isAtEnd = false
         command(["seek", String(seconds), "relative+exact"])
     }
