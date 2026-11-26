@@ -23,6 +23,7 @@ final class PictureInPicture: NSObject, AVPictureInPictureControllerDelegate, AV
     private var possibleObservation: NSKeyValueObservation?
     private var timebase: CMTimebase?
     private var startWork: DispatchWorkItem?
+    nonisolated private let snapshot = PlaybackSnapshot()
 
     var onActiveChange: ((Bool) -> Void)?
     var onRestore: (() -> Void)?
@@ -95,10 +96,25 @@ final class PictureInPicture: NSObject, AVPictureInPictureControllerDelegate, AV
         let controller = AVPictureInPictureController(contentSource: source)
         controller.delegate = self
         self.controller = controller
-        possibleObservation = controller.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { [weak self] _, _ in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.startWhenPossible() }
-            }
+        possibleObservation = Self.observePossible(controller) { [weak self] in self?.startWhenPossible() }
+    }
+
+    /// KVO may report from any thread; the handler is built outside the main actor and hops to it.
+    nonisolated private static func observePossible(
+        _ controller: AVPictureInPictureController, _ onMain: @escaping @MainActor @Sendable () -> Void
+    ) -> NSKeyValueObservation {
+        controller.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { _, _ in
+            DispatchQueue.main.async { MainActor.assumeIsolated { onMain() } }
+        }
+    }
+
+    /// Runs PiP work on the main actor: directly when AVKit calls on the main thread (it
+    /// documents that), via the main queue otherwise, instead of trapping.
+    nonisolated private func onMain(_ work: @escaping @MainActor @Sendable (PictureInPicture) -> Void) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { work(self) }
+        } else {
+            DispatchQueue.main.async { MainActor.assumeIsolated { work(self) } }
         }
     }
 
@@ -107,6 +123,25 @@ final class PictureInPicture: NSObject, AVPictureInPictureControllerDelegate, AV
         startWork?.cancel()
         controller.startPictureInPicture()
     }
+
+    #if DEBUG
+        /// #50 test: AVKit's questions and commands, asked from a background queue.
+        func debugCallbacksFromBackground(_ report: @escaping @Sendable (String) -> Void) {
+            syncTimebase()
+            let source = AVPictureInPictureController.ContentSource(sampleBufferDisplayLayer: displayLayer, playbackDelegate: self)
+            nonisolated(unsafe) let controller = AVPictureInPictureController(contentSource: source)
+            DispatchQueue.global().async { [self] in
+                let range = pictureInPictureControllerTimeRangeForPlayback(controller)
+                let paused = pictureInPictureControllerIsPlaybackPaused(controller)
+                pictureInPictureController(controller, setPlaying: false)
+                pictureInPictureController(controller, didTransitionToRenderSize: CMVideoDimensions(width: 640, height: 360))
+                pictureInPictureController(controller, skipByInterval: CMTime(seconds: 15, preferredTimescale: 1)) {
+                    report("skip completion ran on main=\(Thread.isMainThread)")
+                }
+                report("background: duration=\(range.duration.seconds) paused=\(paused)")
+            }
+        }
+    #endif
 
     var framesRendered: Int { renderer?.frameCount ?? 0 }
     func debugSaveFrame(to url: URL) { renderer?.saveLastFrame(to: url) }
@@ -143,6 +178,7 @@ final class PictureInPicture: NSObject, AVPictureInPictureControllerDelegate, AV
 
     /// Keeps the PiP progress bar in step with mpv (time, pause and speed).
     func syncTimebase() {
+        snapshot.update(duration: engine.duration, live: engine.isLive, playing: engine.isPlaying)
         guard let timebase else { return }
         CMTimebaseSetTime(timebase, time: CMTime(seconds: engine.currentTime, preferredTimescale: 600))
         CMTimebaseSetRate(timebase, rate: engine.isPlaying ? Double(engine.rate) : 0)
@@ -152,63 +188,84 @@ final class PictureInPicture: NSObject, AVPictureInPictureControllerDelegate, AV
     // MARK: AVPictureInPictureControllerDelegate
 
     nonisolated func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
-        MainActor.assumeIsolated { finish() }
+        onMain { $0.finish() }
     }
 
     nonisolated func pictureInPictureController(_ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
-        MainActor.assumeIsolated { finish() }
+        onMain { $0.finish() }
     }
 
     nonisolated func pictureInPictureController(
         _ controller: AVPictureInPictureController,
         restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void
     ) {
-        MainActor.assumeIsolated { onRestore?() }
+        onMain { $0.onRestore?() }
         completionHandler(true)
     }
 
     // MARK: AVPictureInPictureSampleBufferPlaybackDelegate
 
     nonisolated func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, setPlaying playing: Bool) {
-        MainActor.assumeIsolated {
-            playing ? engine.play() : engine.pause()
+        onMain { pip in
+            playing ? pip.engine.play() : pip.engine.pause()
         }
     }
 
+    /// Answered from a snapshot so it works from any thread.
     nonisolated func pictureInPictureControllerTimeRangeForPlayback(_ pictureInPictureController: AVPictureInPictureController) -> CMTimeRange {
-        MainActor.assumeIsolated {
-            guard engine.duration > 0, !engine.isLive else {
-                return CMTimeRange(start: .negativeInfinity, duration: .positiveInfinity)
-            }
-            return CMTimeRange(start: .zero, duration: CMTime(seconds: engine.duration, preferredTimescale: 600))
+        let (duration, live, _) = snapshot.read()
+        guard duration > 0, !live else {
+            return CMTimeRange(start: .negativeInfinity, duration: .positiveInfinity)
         }
+        return CMTimeRange(start: .zero, duration: CMTime(seconds: duration, preferredTimescale: 600))
     }
 
     nonisolated func pictureInPictureControllerIsPlaybackPaused(_ pictureInPictureController: AVPictureInPictureController) -> Bool {
-        MainActor.assumeIsolated { !engine.isPlaying }
+        !snapshot.read().playing
     }
 
     nonisolated func pictureInPictureController(
         _ pictureInPictureController: AVPictureInPictureController, didTransitionToRenderSize newRenderSize: CMVideoDimensions
     ) {
-        MainActor.assumeIsolated {
-            renderer?.resize(to: CGSize(width: CGFloat(newRenderSize.width), height: CGFloat(newRenderSize.height)))
-        }
+        let size = CGSize(width: CGFloat(newRenderSize.width), height: CGFloat(newRenderSize.height))
+        onMain { $0.renderer?.resize(to: size) }
     }
 
     nonisolated func pictureInPictureController(
         _ pictureInPictureController: AVPictureInPictureController, skipByInterval skipInterval: CMTime, completion completionHandler: @escaping () -> Void
     ) {
-        MainActor.assumeIsolated {
-            engine.skip(skipInterval.seconds)
+        let seconds = skipInterval.seconds
+        nonisolated(unsafe) let completion = completionHandler
+        onMain { pip in
+            pip.engine.skip(seconds)
             // AVKit expects the timebase at the new position when the completion runs.
-            if let timebase {
-                let target = max(0, engine.currentTime + skipInterval.seconds)
-                let bounded = engine.duration > 0 ? min(target, engine.duration) : target
+            if let timebase = pip.timebase {
+                let target = max(0, pip.engine.currentTime + seconds)
+                let bounded = pip.engine.duration > 0 ? min(target, pip.engine.duration) : target
                 CMTimebaseSetTime(timebase, time: CMTime(seconds: bounded, preferredTimescale: 600))
             }
+            completion()
         }
-        completionHandler()
+    }
+}
+
+/// Duration, live and playing state for AVKit's questions, readable from any thread.
+private final class PlaybackSnapshot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var duration: TimeInterval = 0
+    private var live = false
+    private var playing = false
+
+    func update(duration: TimeInterval, live: Bool, playing: Bool) {
+        lock.withLock {
+            self.duration = duration
+            self.live = live
+            self.playing = playing
+        }
+    }
+
+    func read() -> (duration: TimeInterval, live: Bool, playing: Bool) {
+        lock.withLock { (duration, live, playing) }
     }
 }
 

@@ -299,8 +299,10 @@ final class ChannelStore: ObservableObject {
     var recentChannels: [Channel] { recent.compactMap { byKey[$0] } }
 
     func markWatched(_ channel: Channel) {
-        UserDefaults.standard.set(channel.name, forKey: "lumora.tv.lastChannelName")
-        UserDefaults.standard.set(channel.key, forKey: "lumora.tv.lastChannelKey")
+        if !DebugMode.background {
+            UserDefaults.standard.set(channel.name, forKey: "lumora.tv.lastChannelName")
+            UserDefaults.standard.set(channel.key, forKey: "lumora.tv.lastChannelKey")
+        }
         unavailable.remove(channel.key)
         recent.removeAll { $0 == channel.key }
         recent.insert(channel.key, at: 0)

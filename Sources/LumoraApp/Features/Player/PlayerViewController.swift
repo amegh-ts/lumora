@@ -16,6 +16,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     private let emptyState = EmptyStateView(frame: .zero)
     private let audioArtwork = AudioArtworkView(frame: .zero)
     private let miniControls = MiniControlsView(frame: .zero)
+    let toast = PlayerToast(frame: .zero)
+    private let skipRipple = SkipRipple(frame: .zero)
     let channelPanel = ChannelPanel()
     let channelBanner = ChannelBanner(frame: .zero)
     var liveTV = LiveTVState()
@@ -117,7 +119,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
     private func installViews() {
         for subview in [
-            videoView, audioArtwork, emptyState, titleBar, spinner, loadingLabel, osd, sidebar, channelPanel, channelBanner, controls, miniControls, thumbnail
+            videoView, audioArtwork, emptyState, titleBar, spinner, loadingLabel, skipRipple, osd, sidebar, channelPanel, channelBanner, toast,
+            controls, miniControls, thumbnail
         ] as [NSView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(subview)
@@ -128,6 +131,11 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         spinner.appearance = NSAppearance(named: .darkAqua)
         sidebar.isHidden = true
         sidebar.delegate = self
+        sidebar.durationFor = { [weak self] item in
+            guard let self else { return nil }
+            if item.id == self.engine.currentItem?.id, self.engine.duration > 0, !self.engine.isLive { return self.engine.duration }
+            return self.library.record(for: item.url)?.duration
+        }
         audioArtwork.isHidden = true
         miniControls.isHidden = true
         miniControls.alphaValue = 0
@@ -197,6 +205,15 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             sidebar.widthAnchor.constraint(equalToConstant: 290),
 
             thumbnail.bottomAnchor.constraint(equalTo: controls.topAnchor, constant: -6),
+
+            skipRipple.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            skipRipple.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            skipRipple.topAnchor.constraint(equalTo: rootView.topAnchor),
+            skipRipple.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+
+            toast.centerXAnchor.constraint(equalTo: controls.centerXAnchor),
+            toast.bottomAnchor.constraint(equalTo: controls.topAnchor, constant: -12),
+            toast.leadingAnchor.constraint(greaterThanOrEqualTo: rootView.leadingAnchor, constant: 18),
 
             channelPanel.leadingAnchor.constraint(equalTo: rootView.leadingAnchor, constant: 10),
             channelPanel.topAnchor.constraint(equalTo: rootView.topAnchor, constant: 40),
@@ -279,7 +296,10 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
                 if self.audioArtwork.isHidden == show {
                     self.audioArtwork.isHidden = !show
                 }
-                DispatchQueue.main.async { self.updateAspectLock() }
+                DispatchQueue.main.async {
+                    self.updateAspectLock()
+                    self.refreshControlState()
+                }
             }
             .store(in: &cancellables)
 
@@ -388,7 +408,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self, !self.engine.hasMedia else { return }
-                self.emptyState.setRecent(self.library.continueWatching(limit: 4).filter { $0.url.isFileURL })
+                self.emptyState.setRecent(self.resumableRecords())
             }
             .store(in: &cancellables)
 
@@ -404,8 +424,14 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             }
             NowPlayingService.shared.playerDidUpdateTime(self)
         }
+        engine.onSkip = { [weak self] seconds in
+            guard let self, !self.isWatchingChannel else { return }
+            self.skipRipple.show(seconds: seconds)
+        }
         engine.onLoad = { [weak self] item in
             guard let self else { return }
+            // A new item cancels an "Up next" countdown or an old notice.
+            self.toast.dismiss()
             if item.kind != .channel {
                 self.liveTV.direction = 0
                 self.scheduleLiveTVUnload()
@@ -431,6 +457,9 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             guard let self else { return }
             if item.kind == .channel {
                 self.channelDidLoad()
+            }
+            if !self.sidebar.isHidden {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.sidebar.reload() }
             }
             self.applySettings()
             NowPlayingService.shared.playerDidChange(self)
@@ -476,8 +505,11 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         engine.onScreenshot = { [weak self] url in
             guard let self else { return }
             if let url {
-                self.osd.show("Screenshot saved", symbol: "camera.fill")
-                NSWorkspace.shared.activateFileViewerSelecting([url])
+                self.flashScreenshot()
+                self.toast.show(
+                    "Screenshot saved", detail: url.lastPathComponent, symbol: "camera.fill",
+                    actions: [PlayerToast.Action(title: "Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }],
+                    duration: 4)
             } else {
                 self.osd.show("Screenshot failed", symbol: "exclamationmark.triangle.fill")
             }
@@ -619,7 +651,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         showingEmptyState = showEmpty
         emptyState.isHidden = !showEmpty
         if showEmpty {
-            emptyState.setRecent(library.continueWatching(limit: 4).filter { $0.url.isFileURL })
+            emptyState.setRecent(resumableRecords())
             emptyState.setLastChannel(ChannelStore.lastChannelName)
             scheduleLiveTVUnload()
             titleBar.title = ""
@@ -634,6 +666,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
 
     private func refreshControlState() {
         let isFullscreen = view.window?.styleMask.contains(.fullScreen) ?? false
+        controls.setPictureInPictureAvailable(
+            engine.hasMedia && engine.hasPicture && engine.renderer == .metal && !videoView.isUsingOpenGL && PictureInPicture.isSupported)
         controls.update(
             hasPlaylistNeighbours: playlist.items.count > 1,
             hasAudio: !engine.audioTracks.isEmpty,
@@ -737,8 +771,18 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     @objc func doubleSize(_ sender: Any?) { resizeWindow(toVideoScale: 2, maxFraction: 1) }
     @objc func fitToScreen(_ sender: Any?) { resizeWindow(toVideoScale: 100, maxFraction: 1) }
 
+    /// Up to four things to continue: files and online videos. Live streams (HLS/TS/DASH links)
+    /// have nothing to resume.
+    private func resumableRecords() -> [LibraryRecord] {
+        let resumable = library.continueWatching(limit: 30).filter { record in
+            record.url.isFileURL || !["m3u8", "ts", "mpd", "m3u"].contains(record.url.pathExtension.lowercased())
+        }
+        return Array(resumable.prefix(4))
+    }
+
     func saveProgress(force: Bool) {
-        guard let item = engine.currentItem, engine.duration > 0 else { return }
+        // Live channels have no resume point (their "duration" just grows while watching).
+        guard let item = engine.currentItem, item.kind != .channel, !engine.isLive, engine.duration > 0 else { return }
         let time = engine.currentTime
         if engine.duration - time < 5 {
             if !watchedMarked {
@@ -764,8 +808,45 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             watchedMarked = true
             library.markWatched(url: item.url, title: item.title, duration: engine.duration)
         }
-        if settings.autoplayNext || settings.repeatMode == .one {
+        guard settings.autoplayNext || settings.repeatMode == .one else { return }
+        let upcoming = playlist.upcoming()
+        guard upcoming.exists else { return }
+        // Repeat One restarts at once; otherwise show what's next with a short countdown.
+        if settings.repeatMode == .one {
             windowController?.playNext(auto: true)
+            return
+        }
+        let name = upcoming.item?.title
+        let playNext: () -> Void = { [weak self] in self?.windowController?.playNext(auto: true) }
+        toast.countdown(
+            seconds: 5, title: { "Up next in \($0)" }, detail: name ?? "A random item (shuffle)", symbol: "forward.end.fill",
+            actions: [
+                PlayerToast.Action(title: "Cancel") { [weak self] in self?.osd.show("Autoplay cancelled", symbol: "stop.fill") },
+                PlayerToast.Action(title: "Play Now", primary: true, handler: playNext)
+            ],
+            finish: playNext)
+    }
+
+    /// Shown after a file resumes where it was left: one click goes back to the start.
+    func noteResumed(at time: TimeInterval) {
+        toast.show(
+            "Resumed at \(TimeFormatter.string(time))", symbol: "clock.arrow.circlepath",
+            actions: [PlayerToast.Action(title: "Start Over") { [weak self] in self?.engine.seek(to: 0) }], duration: 6)
+    }
+
+    /// A quick white flash over the video, like a camera shutter (skipped with Reduce Motion).
+    private func flashScreenshot() {
+        guard !reduceMotion else { return }
+        let flash = NSView()
+        flash.wantsLayer = true
+        flash.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.6).cgColor
+        flash.frame = rootView.bounds
+        rootView.addSubview(flash, positioned: .below, relativeTo: controls)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.35
+            flash.animator().alphaValue = 0
+        } completionHandler: {
+            MainActor.assumeIsolated { flash.removeFromSuperview() }
         }
     }
 
@@ -921,6 +1002,8 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
             togglePlaylist()
         case .toggleChannels:
             toggleChannelPanel(nil)
+        case .pictureInPicture:
+            togglePictureInPicture(nil)
         }
     }
 
@@ -1527,6 +1610,12 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         }
         pictureInPicture.start()
     }
+
+    #if DEBUG
+        func debugPictureInPictureThreads() {
+            pictureInPicture.debugCallbacksFromBackground { line in print("[debug] pip \(line)") }
+        }
+    #endif
 
     /// DEBUG test hook: runs the PiP frame pipeline without the floating window.
     func debugPictureInPicture(start: Bool, frameFile: URL?) -> String {

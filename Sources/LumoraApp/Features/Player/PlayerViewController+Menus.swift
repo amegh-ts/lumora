@@ -206,18 +206,43 @@ extension PlayerViewController {
     @objc func goToTime(_ sender: Any?) {
         guard engine.hasMedia, let window = view.window else { return }
         let alert = NSAlert()
+        // Dark like the player instead of a grey system box.
+        alert.window.appearance = NSAppearance(named: .darkAqua)
         alert.messageText = "Go to Time"
-        let total = engine.duration > 0 ? " (0:00 – \(TimeFormatter.string(engine.duration)))" : ""
-        alert.informativeText = "Enter a time like 1:23:45, 12:30 or 90\(total)."
+        alert.icon = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: nil)
+        let duration = engine.duration
+        alert.informativeText =
+            duration > 0
+            ? "Now at \(TimeFormatter.string(engine.currentTime)) of \(TimeFormatter.string(duration)). Type a time like 1:23:45 or 12:30, or drag."
+            : "Type a time like 1:23:45, 12:30 or 90."
         let field = NSTextField(string: TimeFormatter.string(engine.currentTime))
-        field.frame = NSRect(x: 0, y: 0, width: 220, height: 24)
         field.placeholderString = "h:mm:ss"
+        field.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
+        field.alignment = .center
         field.setAccessibilityLabel("Time")
-        alert.accessoryView = field
+        let link = TimeFieldLink(field: field, duration: duration)
+        var views: [NSView] = [field]
+        if duration > 0 {
+            let slider = NSSlider(value: engine.currentTime, minValue: 0, maxValue: duration, target: link, action: #selector(TimeFieldLink.sliderMoved(_:)))
+            slider.isContinuous = true
+            slider.setAccessibilityLabel("Position")
+            link.slider = slider
+            views.append(slider)
+        }
+        field.delegate = link
+        let stack = NSStackView(views: views)
+        stack.orientation = .vertical
+        stack.spacing = 10
+        stack.frame = NSRect(x: 0, y: 0, width: 300, height: duration > 0 ? 62 : 28)
+        for view in views {
+            view.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        }
+        alert.accessoryView = stack
         alert.addButton(withTitle: "Go")
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
         alert.beginSheetModal(for: window) { [weak self] response in
+            _ = link
             guard response == .alertFirstButtonReturn, let self else { return }
             guard let seconds = Self.parseTime(field.stringValue) else {
                 self.osd.show("Couldn't read “\(field.stringValue)” as a time", symbol: "exclamationmark.triangle")
@@ -227,6 +252,7 @@ extension PlayerViewController {
             self.engine.seek(to: target)
             self.osd.show("Go to \(TimeFormatter.string(target))", symbol: "clock.arrow.circlepath")
         }
+        field.currentEditor()?.selectAll(nil)
     }
 
     /// "1:23:45" → 5025, "12:30" → 750, "90" → 90. Returns nil for anything else.
@@ -257,5 +283,31 @@ extension PlayerViewController {
     private func changeSubtitleSize(by delta: Double) {
         settings.subtitleSize = min(48, max(14, settings.subtitleSize + delta))
         osd.show("Subtitle size \(Int(settings.subtitleSize)) pt", symbol: "textformat.size")
+    }
+}
+
+/// Keeps the Go to Time field and slider in step.
+@MainActor
+private final class TimeFieldLink: NSObject, NSTextFieldDelegate {
+    let field: NSTextField
+    let duration: TimeInterval
+    var slider: NSSlider?
+
+    init(field: NSTextField, duration: TimeInterval) {
+        self.field = field
+        self.duration = duration
+    }
+
+    @objc func sliderMoved(_ sender: NSSlider) {
+        field.stringValue = TimeFormatter.string(sender.doubleValue)
+    }
+
+    func controlTextDidChange(_ notification: Notification) {
+        guard let seconds = PlayerViewController.parseTime(field.stringValue) else {
+            field.textColor = .systemRed
+            return
+        }
+        field.textColor = .labelColor
+        slider?.doubleValue = min(seconds, duration)
     }
 }

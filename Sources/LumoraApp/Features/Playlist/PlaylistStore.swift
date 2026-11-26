@@ -84,6 +84,19 @@ final class PlaylistStore: ObservableObject {
     /// and a pass ends once every item has played (unless Repeat All is on).
     private var shuffleHistory: [Int] = []
 
+    /// What automatic "next" will play, without moving: the next item in order, a random one
+    /// in shuffle (title unknown), or nil at the end with Repeat off.
+    func upcoming() -> (exists: Bool, item: PlaybackItem?) {
+        guard let currentIndex, !items.isEmpty else { return (false, nil) }
+        if repeatMode == .one { return (true, items[currentIndex]) }
+        if shuffle {
+            let unplayed = Set(items.indices).subtracting(shuffleHistory + [currentIndex])
+            return (!unplayed.isEmpty || repeatMode == .all, nil)
+        }
+        if currentIndex + 1 < items.count { return (true, items[currentIndex + 1]) }
+        return repeatMode == .all ? (true, items.first) : (false, nil)
+    }
+
     func next(auto: Bool = false) -> PlaybackItem? {
         guard !items.isEmpty else { return nil }
         guard let currentIndex else {

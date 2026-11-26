@@ -144,6 +144,26 @@ enum SettingsPanes {
                             { settings.windowFit }, { settings.windowFit = $0 }))
                 ]),
             Form.section(
+                "Default Player",
+                rows: [
+                    Form.row(
+                        "Open videos with Lumora",
+                        detail: "Double-clicking MP4, MKV, MOV, AVI, WebM and other videos opens them here. macOS asks you to confirm.",
+                        control: Form.button(DefaultPlayer.isDefault ? "Lumora Is the Default" : "Make Default") {
+                            DefaultPlayer.makeDefault { ok in
+                                let alert = NSAlert()
+                                alert.messageText = ok ? "Lumora now opens your videos" : "Some video types couldn't be changed"
+                                alert.informativeText =
+                                    ok
+                                    ? "Double-click any video to play it in Lumora."
+                                    : "macOS may have asked for confirmation; choose Lumora there, or use Get Info › Open With › Change All in Finder."
+                                if let window = SettingsWindowController.shared.window {
+                                    alert.beginSheetModal(for: window)
+                                }
+                            }
+                        })
+                ]),
+            Form.section(
                 "Updates",
                 rows: [
                     Form.row(

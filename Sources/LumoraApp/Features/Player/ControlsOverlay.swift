@@ -12,6 +12,7 @@ enum ControlsAction {
     case toggleFullscreen
     case togglePlaylist
     case toggleChannels
+    case pictureInPicture
 }
 
 enum ControlsMenu {
@@ -32,20 +33,22 @@ final class ControlsOverlay: NSView {
     private let remainingLabel = HUD.label(size: 11.5, weight: .medium, color: HUD.secondaryText, monospaced: true)
     private let volumeSlider = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
 
-    private let playButton = HUDButton(symbol: "play.fill", size: 22, diameter: 42, tooltip: "Play")
-    private let backButton = HUDButton(symbol: "gobackward.10", size: 16, diameter: 34, tooltip: "Back 10 seconds")
-    private let forwardButton = HUDButton(symbol: "goforward.10", size: 16, diameter: 34, tooltip: "Forward 10 seconds")
-    private let previousButton = HUDButton(symbol: "backward.end.fill", size: 13, diameter: 30, tooltip: "Previous item")
-    private let nextButton = HUDButton(symbol: "forward.end.fill", size: 13, diameter: 30, tooltip: "Next item")
-    private let volumeButton = HUDButton(symbol: "speaker.wave.2.fill", size: 13, tooltip: "Mute")
-    private let speedButton = HUDTextButton(title: "1×", tooltip: "Playback speed")
-    private let audioButton = HUDButton(symbol: "waveform", size: 14, tooltip: "Audio")
-    private let subtitlesButton = HUDButton(symbol: "captions.bubble", size: 14, tooltip: "Subtitles")
+    private let playButton = HUDButton(symbol: "play.fill", size: 22, diameter: 42, tooltip: "Play (Space)")
+    private let backButton = HUDButton(symbol: "gobackward.10", size: 16, diameter: 34, tooltip: "Back 10 seconds (←)")
+    private let forwardButton = HUDButton(symbol: "goforward.10", size: 16, diameter: 34, tooltip: "Forward 10 seconds (→)")
+    private let previousButton = HUDButton(symbol: "backward.end.fill", size: 13, diameter: 30, tooltip: "Previous item (⌘←)")
+    private let nextButton = HUDButton(symbol: "forward.end.fill", size: 13, diameter: 30, tooltip: "Next item (⌘→)")
+    private let volumeButton = HUDButton(symbol: "speaker.wave.2.fill", size: 13, tooltip: "Mute (M)")
+    private let speedButton = HUDTextButton(title: "1×", tooltip: "Playback speed ([ slower, ] faster)")
+    private let audioButton = HUDButton(symbol: "waveform", size: 14, tooltip: "Audio (A next track)")
+    private let subtitlesButton = HUDButton(symbol: "captions.bubble", size: 14, tooltip: "Subtitles (T next track)")
     private let moreButton = HUDButton(symbol: "ellipsis.circle", size: 15, tooltip: "More")
-    private let playlistButton = HUDButton(symbol: "sidebar.right", size: 14, tooltip: "Playlist")
+    private let playlistButton = HUDButton(symbol: "sidebar.right", size: 14, tooltip: "Playlist (P)")
     private let channelsButton = HUDButton(symbol: "tv", size: 14, tooltip: "Live TV (⇧⌘T)")
+    private let pipButton = HUDButton(symbol: "pip.enter", size: 14, tooltip: "Picture in Picture (⌥⌘P)")
+    private var pipAvailable = true
     private var channelMode = false
-    private let fullscreenButton = HUDButton(symbol: "arrow.up.left.and.arrow.down.right", size: 13, tooltip: "Full screen")
+    private let fullscreenButton = HUDButton(symbol: "arrow.up.left.and.arrow.down.right", size: 13, tooltip: "Full screen (F)")
 
     private var duration: TimeInterval = 0
     private var currentTime: TimeInterval = 0
@@ -91,7 +94,8 @@ final class ControlsOverlay: NSView {
         leftGroup.spacing = 2
         let centerGroup = NSStackView(views: [previousButton, backButton, playButton, forwardButton, nextButton])
         centerGroup.spacing = 6
-        let rightGroup = NSStackView(views: [speedButton, audioButton, subtitlesButton, moreButton, channelsButton, playlistButton, fullscreenButton])
+        let rightGroup = NSStackView(views: [speedButton, audioButton, subtitlesButton, moreButton, channelsButton, pipButton, playlistButton, fullscreenButton]
+        )
         rightGroup.spacing = 2
         for group in [leftGroup, centerGroup, rightGroup] {
             group.orientation = .horizontal
@@ -138,6 +142,7 @@ final class ControlsOverlay: NSView {
         volumeButton.onClick = { [weak self] in self?.onAction?(.toggleMute) }
         playlistButton.onClick = { [weak self] in self?.onAction?(.togglePlaylist) }
         channelsButton.onClick = { [weak self] in self?.onAction?(.toggleChannels) }
+        pipButton.onClick = { [weak self] in self?.onAction?(.pictureInPicture) }
         fullscreenButton.onClick = { [weak self] in self?.onAction?(.toggleFullscreen) }
         speedButton.onClick = { [weak self] in self?.popMenu(.speed, from: self?.speedButton) }
         audioButton.onClick = { [weak self] in self?.popMenu(.audio, from: self?.audioButton) }
@@ -165,6 +170,7 @@ final class ControlsOverlay: NSView {
         backButton.isHidden = channelMode && width < 600
         forwardButton.isHidden = channelMode && width < 600
         channelsButton.isHidden = width < 480
+        pipButton.isHidden = width < 640 || !pipAvailable
         volumeSlider.isHidden = width < 520
         speedButton.isHidden = width < 460
         audioButton.isHidden = width < 430
@@ -205,7 +211,7 @@ final class ControlsOverlay: NSView {
 
     func update(isPlaying: Bool) {
         playButton.setSymbol(isPlaying ? "pause.fill" : "play.fill", size: 22)
-        playButton.toolTip = isPlaying ? "Pause" : "Play"
+        playButton.toolTip = isPlaying ? "Pause (Space)" : "Play (Space)"
         playButton.setAccessibilityLabel(playButton.toolTip)
     }
 
@@ -230,7 +236,9 @@ final class ControlsOverlay: NSView {
             lastVolumeSymbol = symbol
             volumeButton.setSymbol(symbol, size: 13)
         }
-        let label = muted ? "Unmute" : "Mute"
+        let label = muted ? "Unmute (M)" : "Mute (M)"
+        // Above 100% (volume boost) the slider turns orange so boosting is obvious.
+        volumeSlider.trackFillColor = volume > 1.0001 ? .systemOrange : nil
         volumeButton.toolTip = label
         volumeButton.setAccessibilityLabel(label)
         volumeSlider.setAccessibilityValueDescription("\(Int((volume * 100).rounded())) percent")
@@ -255,7 +263,7 @@ final class ControlsOverlay: NSView {
             isFullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
             size: 13
         )
-        fullscreenButton.toolTip = isFullscreen ? "Exit full screen" : "Full screen"
+        fullscreenButton.toolTip = isFullscreen ? "Exit full screen (F)" : "Full screen (F)"
         fullscreenButton.setAccessibilityLabel(fullscreenButton.toolTip)
     }
 
@@ -267,10 +275,17 @@ final class ControlsOverlay: NSView {
             nextButton.setSymbol(on ? "chevron.up" : "forward.end.fill", size: on ? 15 : 13)
             needsLayout = true
         }
-        previousButton.toolTip = on ? "Channel down\(previousName.map { ": \($0)" } ?? "") (⌘↓)" : "Previous item"
-        nextButton.toolTip = on ? "Channel up\(nextName.map { ": \($0)" } ?? "") (⌘↑)" : "Next item"
+        previousButton.toolTip = on ? "Channel down\(previousName.map { ": \($0)" } ?? "") (⌘↓)" : "Previous item (⌘←)"
+        nextButton.toolTip = on ? "Channel up\(nextName.map { ": \($0)" } ?? "") (⌘↑)" : "Next item (⌘→)"
         previousButton.setAccessibilityLabel(previousButton.toolTip)
         nextButton.setAccessibilityLabel(nextButton.toolTip)
+    }
+
+    /// PiP needs a picture and the Metal renderer.
+    func setPictureInPictureAvailable(_ available: Bool) {
+        guard available != pipAvailable else { return }
+        pipAvailable = available
+        needsLayout = true
     }
 
     func setChannelsButtonActive(_ active: Bool) {
