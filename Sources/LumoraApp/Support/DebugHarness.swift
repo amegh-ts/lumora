@@ -199,6 +199,21 @@ enum DebugMode {
                     }
                 }
             }
+            // LUMORA_ARTWORK_TEST=4 → at 4 s ask for the Now Playing artwork from a background queue,
+            // the way MediaPlayer does (this used to trap).
+            if let delay = environment["LUMORA_ARTWORK_TEST"].flatMap(Double.init) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    guard let artwork = MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyArtwork] as? MPMediaItemArtwork else {
+                        print("[debug] artwork none")
+                        return
+                    }
+                    nonisolated(unsafe) let item = artwork
+                    DispatchQueue.global().async {
+                        let image = item.image(at: CGSize(width: 300, height: 300))
+                        print("[debug] artwork from background queue ok=\(image != nil)")
+                    }
+                }
+            }
             // LUMORA_CROP="2:2.35" → at 2 s crop to 2.35:1 and reshape the window.
             if let entry = environment["LUMORA_CROP"] {
                 let parts = entry.split(separator: ":").compactMap { Double($0) }
