@@ -1043,8 +1043,14 @@ final class PlaybackEngine: ObservableObject {
         // Kept for a crash report on the next launch (scrubbed of names and paths before sending).
         let prefix = message.prefix.map { String(cString: $0) } ?? "mpv"
         SessionLog.record("[\(prefix)] \(line)")
+        #if DEBUG
+            if getenv("LUMORA_MPV_LOG") != nil {
+                print("[mpv] [\(prefix)] \(line.trimmingCharacters(in: .whitespacesAndNewlines))")
+            }
+        #endif
         guard renderer == .metal, !pendingOpenGLSwitch else { return }
         if line.contains("selected video_out") || line.contains("suitable GPU context") {
+            SessionLog.recordRendererFallback(reason: "[\(prefix)] \(line.trimmingCharacters(in: .whitespacesAndNewlines))")
             onRendererFailure?()
         }
     }

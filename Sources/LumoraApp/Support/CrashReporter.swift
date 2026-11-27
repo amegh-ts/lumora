@@ -284,4 +284,19 @@ enum SessionLog {
     static func recentLines() -> [String] {
         queue.sync { previous }
     }
+
+    /// Keeps why Metal gave up (the triggering mpv line plus the messages before it) in its own
+    /// file, so later stream errors can't push it out of recent-errors.log. Last 5 events kept.
+    static func recordRendererFallback(reason: String) {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        queue.async {
+            let fallbackFile = AppPaths.logs.appendingPathComponent("renderer-fallback.log")
+            let context = lines.suffix(15).joined(separator: "\n")
+            let event = "=== \(stamp) Metal failed, switched to OpenGL\nreason: \(reason)\n\(context)"
+            let old = (try? String(contentsOf: fallbackFile, encoding: .utf8)) ?? ""
+            let events = (old.components(separatedBy: "\n\n").filter { !$0.isEmpty } + [event]).suffix(5)
+            AppPaths.ensureDirectories()
+            try? events.joined(separator: "\n\n").write(to: fallbackFile, atomically: true, encoding: .utf8)
+        }
+    }
 }
