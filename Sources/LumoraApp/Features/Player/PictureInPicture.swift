@@ -76,7 +76,14 @@ final class PictureInPicture: NSObject, AVPictureInPictureControllerDelegate, AV
                 MainActor.assumeIsolated { self?.createController() }
             }
         }
-        renderer.start(size: CGSize(width: 960, height: 540))
+        // Without a render context mpv's libmpv output can't start; stay on Metal.
+        guard renderer.start(size: CGSize(width: 960, height: 540)) else {
+            self.renderer = nil
+            isActive = false
+            hostView.isHidden = true
+            onActiveChange?(false)
+            return
+        }
         engine.beginSoftwareOutput()
         if dryRun { return }
 
@@ -158,19 +165,24 @@ final class PictureInPicture: NSObject, AVPictureInPictureControllerDelegate, AV
     /// Window closing: end PiP now, before the engine is destroyed.
     func tearDown() {
         controller?.stopPictureInPicture()
-        finish()
+        // The engine is about to be destroyed: don't start a new Metal output for a closing window.
+        finish(restoreOutput: false)
     }
 
     /// Back to the Metal output and the normal window.
-    private func finish() {
+    private func finish(restoreOutput: Bool = true) {
         guard isActive else { return }
         isActive = false
         startWork?.cancel()
         possibleObservation = nil
         controller = nil
+        // Switch mpv back to Metal before freeing the software context, so the libmpv output
+        // never runs without one (that failure used to look like "Metal unavailable").
+        if restoreOutput {
+            engine.endSoftwareOutput()
+        }
         renderer?.stop()
         renderer = nil
-        engine.endSoftwareOutput()
         displayLayer.flushAndRemoveImage()
         hostView.isHidden = true
         onActiveChange?(false)
@@ -290,7 +302,8 @@ final class SoftwareFrameRenderer: @unchecked Sendable {
         self.layer = layer
     }
 
-    func start(size: CGSize) {
+    @discardableResult
+    func start(size: CGSize) -> Bool {
         queue.sync {
             self.size = Self.bounded(size)
             let apiType = strdup("sw")
@@ -300,7 +313,7 @@ final class SoftwareFrameRenderer: @unchecked Sendable {
                 mpv_render_param()
             ]
             var created: OpaquePointer?
-            guard mpv_render_context_create(&created, mpv, &params) >= 0, let created else { return }
+            guard mpv_render_context_create(&created, mpv, &params) >= 0, let created else { return false }
             context = created
             let retained = Unmanaged.passRetained(self)
             box = retained
@@ -311,6 +324,7 @@ final class SoftwareFrameRenderer: @unchecked Sendable {
                     let renderer = Unmanaged<SoftwareFrameRenderer>.fromOpaque(pointer).takeUnretainedValue()
                     renderer.queue.async { renderer.renderIfNeeded() }
                 }, retained.toOpaque())
+            return true
         }
     }
 

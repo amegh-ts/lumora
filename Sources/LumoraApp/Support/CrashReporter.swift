@@ -142,7 +142,7 @@ enum CrashReporter {
         }
         markdown += "**Crashed thread**\n```\n\(lines.joined(separator: "\n"))\n```\n"
         if !mpvErrors.isEmpty {
-            markdown += "**Last player messages**\n```\n\(mpvErrors.suffix(12).joined(separator: "\n"))\n```\n"
+            markdown += "**Last player messages**\n```\n\(mpvErrors.suffix(12).map(scrubPlayerMessage).joined(separator: "\n"))\n```\n"
         }
         markdown += "\n**What were you doing when it crashed?**\n\n"
         markdown += "<!-- Sent from Lumora's crash dialog. File names, titles and links were removed. Incident \(header["incident_id"] as? String ?? "?") -->\n"
@@ -170,11 +170,29 @@ enum CrashReporter {
             (#"https?://[^\s)\]"']+"#, "<link>"),
             (#"[a-z]+://[^\s)\]"']+"#, "<link>"),
             (#"/Users/[^/\s]+"#, "~"),
-            // File paths, including names with spaces: from the folder start up to the extension.
-            (#"(?:~|/(?:Volumes|private|tmp|var|Applications|Library))/[^\n"]*?\.[A-Za-z0-9]{2,5}\b"#, "<file>"),
-            // Anything else still under the home folder.
-            (#"~/[^\s"]*"#, "<path>"),
+            // Paths run to the end of the line or the closing quote: names can hold spaces and
+            // dots ("~/Movies/Game.of.Thrones.S01E02.mkv", "~/Movies/Secret Show/").
+            (#"(?:~|/(?:Volumes|private|tmp|var|Applications|Library|opt|Network))/[^\n"'`]*"#, "<path>"),
             (#"“[^”]*”"#, "“…”")
+        ]
+        for (pattern, replacement) in patterns {
+            result = result.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
+        }
+        return result
+    }
+
+    /// Player messages can also name servers and files without a path ("Failed to resolve
+    /// hostname my-iptv.example", "Opening Show.S01E02.mkv"); remove those as well.
+    private static let mediaExtensions =
+        "mkv|mp4|m4v|mov|avi|wmv|flv|webm|ts|m2ts|mpg|mpeg|3gp|ogv|mp3|m4a|flac|wav|ogg|opus|aac|srt|ass|ssa|vtt|sub|idx|m3u8?|pls"
+
+    static func scrubPlayerMessage(_ text: String) -> String {
+        var result = scrub(text)
+        let patterns: [(String, String)] = [
+            (#"\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b"#, "<host>"),
+            (#"(?i)\b(?:hostname|host|server)\s+\S+"#, "host <host>"),
+            (#"(?i)\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|tv|me|info|xyz|live|stream|top|cc|ru|in|uk|de|fr|us|co)\b(?::\d+)?"#, "<host>"),
+            (#"(?i)[^\s"'/]+\.(?:"# + mediaExtensions + #")\b"#, "<file>")
         ]
         for (pattern, replacement) in patterns {
             result = result.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
@@ -258,18 +276,44 @@ enum SessionLog {
     nonisolated(unsafe) private static var previous: [String] = []
     private static var file: URL { AppPaths.logs.appendingPathComponent("recent-errors.log") }
 
+    nonisolated(unsafe) private static var writePending = false
+    /// ISO8601DateFormatter is thread-safe; one instance avoids building one per message.
+    nonisolated(unsafe) private static let stampFormatter = ISO8601DateFormatter()
+
     static func record(_ line: String, synchronously: Bool = false) {
-        let stamp = ISO8601DateFormatter().string(from: Date())
+        let stamp = stampFormatter.string(from: Date())
         let entry = "\(stamp) \(line.trimmingCharacters(in: .whitespacesAndNewlines))"
-        let write = {
-            lines.append(entry)
-            if lines.count > 40 {
-                lines.removeFirst(lines.count - 40)
+        if synchronously {
+            queue.sync {
+                append(entry)
+                writeFile()
             }
-            AppPaths.ensureDirectories()
-            try? lines.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            return
         }
-        synchronously ? queue.sync(execute: write) : queue.async(execute: write)
+        // A broken stream can log many errors a second: write the file at most once a second.
+        queue.async {
+            append(entry)
+            guard !writePending else { return }
+            writePending = true
+            queue.asyncAfter(deadline: .now() + 1) {
+                writePending = false
+                writeFile()
+            }
+        }
+    }
+
+    /// Runs on `queue`.
+    private static func append(_ entry: String) {
+        lines.append(entry)
+        if lines.count > 40 {
+            lines.removeFirst(lines.count - 40)
+        }
+    }
+
+    /// Runs on `queue`.
+    private static func writeFile() {
+        AppPaths.ensureDirectories()
+        try? lines.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
     }
 
     /// Reads what the previous run left behind, before this run writes anything.
@@ -283,5 +327,20 @@ enum SessionLog {
     /// The previous run's last messages (the run that may have crashed).
     static func recentLines() -> [String] {
         queue.sync { previous }
+    }
+
+    /// Keeps why Metal gave up (the triggering mpv line plus the messages before it) in its own
+    /// file, so later stream errors can't push it out of recent-errors.log. Last 5 events kept.
+    static func recordRendererFallback(reason: String) {
+        let stamp = stampFormatter.string(from: Date())
+        queue.async {
+            let fallbackFile = AppPaths.logs.appendingPathComponent("renderer-fallback.log")
+            let context = lines.suffix(15).joined(separator: "\n")
+            let event = "=== \(stamp) Metal failed, switched to OpenGL\nreason: \(reason)\n\(context)"
+            let old = (try? String(contentsOf: fallbackFile, encoding: .utf8)) ?? ""
+            let events = (old.components(separatedBy: "\n\n").filter { !$0.isEmpty } + [event]).suffix(5)
+            AppPaths.ensureDirectories()
+            try? events.joined(separator: "\n\n").write(to: fallbackFile, atomically: true, encoding: .utf8)
+        }
     }
 }

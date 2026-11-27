@@ -75,17 +75,27 @@ final class ChannelStore: ObservableObject {
     func loadIfNeeded() {
         guard !loaded else { return }
         loaded = true
-        if let data = try? Data(contentsOf: Self.stateFile), let state = try? JSONDecoder().decode(State.self, from: data) {
-            sources = state.sources
-            favourites = Set(state.favourites)
-            recent = state.recent
-            numbers = state.numbers ?? [:]
+        var stateReadable = true
+        if let data = try? Data(contentsOf: Self.stateFile) {
+            if let state = try? JSONDecoder().decode(State.self, from: data) {
+                sources = state.sources
+                favourites = Set(state.favourites)
+                recent = state.recent
+                numbers = state.numbers ?? [:]
+            } else {
+                // Keep the damaged file and every cached list; deleting caches here would lose
+                // the lists for good.
+                stateReadable = false
+                if !DebugMode.background {
+                    DataFileBackup.preserve(Self.stateFile)
+                }
+            }
         }
         let ids = sources.map(\.id)
         let keep = Set(ids.map { Self.cacheFile($0).lastPathComponent } + [Self.stateFile.lastPathComponent])
         Task.detached(priority: .userInitiated) {
             // Remove caches no list uses any more (removed lists, the 0.12.0 format).
-            if !DebugMode.background,
+            if !DebugMode.background, stateReadable,
                 let files = try? FileManager.default.contentsOfDirectory(at: ChannelStore.folder, includingPropertiesForKeys: nil)
             {
                 for file in files where file.pathExtension == "json" && !keep.contains(file.lastPathComponent) {
@@ -287,6 +297,7 @@ final class ChannelStore: ObservableObject {
     func isFavourite(_ channel: Channel) -> Bool { favourites.contains(channel.key) }
 
     func toggleFavourite(_ channel: Channel) {
+        loadIfNeeded()
         if favourites.contains(channel.key) {
             favourites.remove(channel.key)
         } else {
@@ -303,6 +314,7 @@ final class ChannelStore: ObservableObject {
             UserDefaults.standard.set(channel.name, forKey: "lumora.tv.lastChannelName")
             UserDefaults.standard.set(channel.key, forKey: "lumora.tv.lastChannelKey")
         }
+        loadIfNeeded()
         unavailable.remove(channel.key)
         recent.removeAll { $0 == channel.key }
         recent.insert(channel.key, at: 0)
@@ -333,7 +345,8 @@ final class ChannelStore: ObservableObject {
 
     private func save() {
         // Background test runs (LUMORA_BACKGROUND, DEBUG only) must not change real data.
-        guard !DebugMode.background else { return }
+        // Unloaded, the lists in memory are empty; saving would erase the user's lists.
+        guard !DebugMode.background, loaded else { return }
         let state = State(sources: sources, favourites: Array(favourites), recent: recent, numbers: numbers)
         Task.detached(priority: .utility) {
             try? FileManager.default.createDirectory(at: ChannelStore.folder, withIntermediateDirectories: true)
