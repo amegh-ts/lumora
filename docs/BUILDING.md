@@ -21,6 +21,16 @@ Downloads pinned, checksum-verified sources of FFmpeg 9.1 and mpv 0.42.0, builds
 nonfree parts into `.build/deps/prefix`, and unpacks Sparkle 2.10.1 into `.build/deps/sparkle`.
 The script fails if a GPL library ends up linked.
 
+FFmpeg is trimmed to keep the app small: all decoders, demuxers, parsers and protocols stay, but only the
+filters and muxers listed in `FFMPEG_FILTERS` / `FFMPEG_MUXERS` are built, and libavdevice is off. A new
+`af`/`vf` filter in Lumora must be added to `FFMPEG_FILTERS` first, or mpv reports "No such filter".
+Changing either list rebuilds FFmpeg automatically.
+
+Homebrew can't install old versions, so the Homebrew libraries bundled into the app are checked rather than
+pinned: the script warns when an installed version differs from `Scripts/brew-versions.txt` (fails with
+`STRICT_BREW_VERSIONS=1`) and saves the versions used in `.build/deps/prefix/brew-versions.txt`. After testing a
+build with newer Homebrew libraries, update `Scripts/brew-versions.txt`.
+
 ### Video renderers
 
 - **Metal (default)**: mpv `vo=gpu-next` (libplacebo) with `gpu-context=macvk`, i.e. Vulkan on MoltenVK on Metal,

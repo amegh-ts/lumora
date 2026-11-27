@@ -1,0 +1,27 @@
+# Homebrew libraries bundled into Lumora.app, with the versions the last release was built and tested with.
+# Scripts/build-deps.sh compares these with the installed versions and warns on any difference
+# (fails with STRICT_BREW_VERSIONS=1). After testing a build with newer versions, update this file.
+dav1d 1.5.5
+libass 0.17.5_1
+libplacebo 7.387.0
+luajit 2.1.1795119671
+uchardet 0.0.8
+little-cms2 2.20
+libbluray 1.5.0
+zimg 3.0.6
+molten-vk 1.4.2
+vulkan-loader 1.4.363.0
+shaderc 2026.4
+freetype 2.15.0
+harfbuzz 15.2.0
+fribidi 1.0.18
+fontconfig 2.18.4
+glib 2.90.1
+libpng 1.6.59
+jpeg-turbo 3.2.1
+brotli 1.2.1
+graphite2 1.3.15
+pcre2 10.49
+gettext 1.0
+libunibreak 8.0.1
+libudfread 1.2.0

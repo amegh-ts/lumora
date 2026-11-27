@@ -39,16 +39,49 @@ fetch() {
     echo "$sha  $SRC/$file" | shasum -a 256 -c - >/dev/null || { echo "error: checksum mismatch for $file" >&2; exit 1; }
 }
 
+# Homebrew can't install old versions, so the bundled Homebrew libraries are checked, not pinned:
+# any difference from Scripts/brew-versions.txt is reported, and the installed set is saved in the prefix.
+check_brew_versions() {
+    local expected="$ROOT/Scripts/brew-versions.txt" drift=0 formula want have
+    while read -r formula want; do
+        [[ -z "$formula" || "$formula" == \#* ]] && continue
+        have="$(basename "$(readlink "$BREW/opt/$formula" 2>/dev/null)" 2>/dev/null || true)"
+        if [[ "$have" != "$want" ]]; then
+            local message="Homebrew $formula is ${have:-missing}, expected $want (Scripts/brew-versions.txt)"
+            if [[ -n "${GITHUB_ACTIONS:-}" ]]; then echo "::warning::$message"; else echo "warning: $message" >&2; fi
+            drift=1
+        fi
+        echo "$formula ${have:-missing}"
+    done < "$expected" > "$WORK/brew-versions.txt"
+    if [[ "$drift" == 1 && "${STRICT_BREW_VERSIONS:-}" == "1" ]]; then
+        echo "error: Homebrew versions differ (STRICT_BREW_VERSIONS=1)" >&2
+        exit 1
+    fi
+}
+
 fetch "$FFMPEG_URL" "$FFMPEG_SHA256" "ffmpeg-$FFMPEG_VERSION.tar.gz"
 fetch "$MPV_URL" "$MPV_SHA256" "mpv-$MPV_VERSION.tar.gz"
 
-FFMPEG_STAMP="$PREFIX/.ffmpeg-$FFMPEG_VERSION"
+# Only the filters mpv and Lumora use (checked against mpv 0.42.0; config and scripts are off):
+#   graph plumbing and format negotiation: buffer/abuffer, buffersink/abuffersink, format/aformat,
+#     scale/aresample (auto-inserted by libavfilter), null/anull
+#   Lumora: equalizer (audio EQ), scale (thumbnails)
+#   mpv auto filters: bwdif (deinterlace), rotate (non-90 rotation), vflip, atempo (af_lavfi_tempo),
+#     xstack + crop (tiled HEIF/AVIF images)
+# Adding a filter to an "af"/"vf" property in Lumora means adding it here.
+FFMPEG_FILTERS="buffer,abuffer,buffersink,abuffersink,format,aformat,scale,aresample,null,anull,equalizer,bwdif,rotate,vflip,atempo,xstack,crop"
+# Muxers write files. Kept: spdif (mpv audio passthrough) and the containers stream recording (#17) needs.
+FFMPEG_MUXERS="spdif,matroska,webm,mpegts,mp4,mov"
+FFMPEG_CONFIG_HASH="$(printf '%s|%s' "$FFMPEG_FILTERS" "$FFMPEG_MUXERS" | shasum -a 256 | cut -c1-12)"
+
+FFMPEG_STAMP="$PREFIX/.ffmpeg-$FFMPEG_VERSION-$FFMPEG_CONFIG_HASH"
 if [[ ! -f "$FFMPEG_STAMP" || "${REBUILD_FFMPEG:-}" == "1" ]]; then
     rm -rf "$PREFIX"
 fi
 rm -rf "$WORK"
 mkdir -p "$WORK" "$PREFIX"
 tar -xzf "$SRC/mpv-$MPV_VERSION.tar.gz" -C "$WORK"
+check_brew_versions
 
 if [[ -f "$FFMPEG_STAMP" ]]; then
     echo "==> FFmpeg $FFMPEG_VERSION already built (REBUILD_FFMPEG=1 to force)"
@@ -66,11 +99,17 @@ echo "==> FFmpeg $FFMPEG_VERSION (LGPL)"
         --enable-zlib --enable-bzlib --enable-iconv \
         --enable-libdav1d \
         --disable-encoders --enable-encoder=png,mjpeg,ljpeg,aac,pcm_s16le \
-        --disable-indevs --disable-outdevs \
+        --disable-avdevice --disable-indevs --disable-outdevs \
+        --disable-muxers --enable-muxer="$FFMPEG_MUXERS" \
+        --disable-filters --enable-filter="$FFMPEG_FILTERS" \
         --disable-gpl --disable-nonfree \
         --extra-cflags="-I$BREW/include" --extra-ldflags="-L$BREW/lib" --extra-libs="-liconv" \
         --install-name-dir="$PREFIX/lib" > "$WORK/ffmpeg-configure.log"
     grep -E "^License:" "$WORK/ffmpeg-configure.log" || true
+    if grep -i "did not match anything" "$WORK/ffmpeg-configure.log"; then
+        echo "error: unknown FFmpeg filter or muxer name" >&2
+        exit 1
+    fi
     make -j"$JOBS" > "$WORK/ffmpeg-build.log" 2>&1
     make install > /dev/null
 )
@@ -93,6 +132,7 @@ echo "==> mpv $MPV_VERSION (libmpv, -Dgpl=false)"
         -Dvulkan=enabled -Degl=disabled \
         -Dswift-build=enabled -Dmacos-cocoa-cb=disabled -Dmacos-media-player=disabled -Dmacos-touchbar=disabled \
         -Dmanpage-build=disabled -Dhtml-build=disabled \
+        -Dlibavdevice=disabled \
         -Dlibbluray=enabled -Duchardet=enabled -Dlcms2=enabled -Dzimg=enabled \
         -Dcocoa=enabled -Dgl-cocoa=enabled -Dvideotoolbox-gl=enabled \
         > "$WORK/mpv-configure.log"
@@ -108,5 +148,6 @@ if otool -L "$PREFIX"/lib/*.dylib | grep -iE 'x264|x265|rubberband|vapoursynth|p
     exit 1
 fi
 
+cp "$WORK/brew-versions.txt" "$PREFIX/brew-versions.txt"
 echo "==> Done: $PREFIX"
 ls -la "$PREFIX/lib"/*.dylib | awk '{print $5, $9}'
