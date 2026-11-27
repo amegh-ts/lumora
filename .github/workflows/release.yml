@@ -26,10 +26,22 @@ jobs:
 
       - name: Read version
         id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+          # Only main publishes: a manual run on another branch must never sign or ship.
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Not on main — building only."
+            exit 0
+          fi
+          # Published means a non-draft release with both the DMG and the appcast. Anything
+          # less (no release, a draft, a missing upload) is published or repaired by this run.
+          ASSETS=$(gh release view "v$VERSION" --json isDraft,assets \
+            -q 'select(.isDraft == false) | .assets[].name' 2>/dev/null || true)
+          if echo "$ASSETS" | grep -qx "Lumora-$VERSION.dmg" && echo "$ASSETS" | grep -qx "appcast.xml"; then
             echo "publish=false" >> "$GITHUB_OUTPUT"
             echo "v$VERSION is already released — building only."
           else
@@ -56,7 +68,7 @@ jobs:
         run: Scripts/make-dmg.sh
 
       - name: Sign update feed
-        if: steps.version.outputs.publish == 'true'
+        if: steps.version.outputs.publish == 'true' && github.ref == 'refs/heads/main'
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
@@ -70,18 +82,24 @@ jobs:
           rm -f "$KEY_FILE"
 
       - name: Publish GitHub release
-        if: steps.version.outputs.publish == 'true'
+        if: steps.version.outputs.publish == 'true' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           NOTES="release-notes/$VERSION.md"
           [ -s "$NOTES" ] || { echo "::error::$NOTES is missing"; exit 1; }
-          gh release create "v$VERSION" \
-            --target "$GITHUB_SHA" \
-            --title "Lumora $VERSION" \
-            --notes-file "$NOTES" \
-            "dist/Lumora-$VERSION.dmg" dist/appcast.xml
+          # Upload to a draft first and publish last, so "latest" never points at a release
+          # without its appcast (every update check reads latest/download/appcast.xml).
+          if ! gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release create "v$VERSION" \
+              --draft \
+              --target "$GITHUB_SHA" \
+              --title "Lumora $VERSION" \
+              --notes-file "$NOTES"
+          fi
+          gh release upload "v$VERSION" --clobber "dist/Lumora-$VERSION.dmg" dist/appcast.xml
+          gh release edit "v$VERSION" --draft=false --latest
 
       - name: Upload DMG (build only)
         if: steps.version.outputs.publish != 'true'

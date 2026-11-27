@@ -134,9 +134,13 @@ extension PlayerViewController: ChannelPanelDelegate {
         liveTVUnloadWork?.cancel()
         guard !isChannelPanelVisible, !isWatchingChannel, ChannelStore.shared.isLoaded else { return }
         let work = DispatchWorkItem { [weak self] in
-            guard let self, !self.isChannelPanelVisible, !self.isWatchingChannel else { return }
-            self.liveTV.ring = []
-            self.channelPanel.clear()
+            // The lists are shared by every window: keep them while any window still uses them.
+            let players = NSApp.windows.compactMap { $0.contentViewController as? PlayerViewController }
+            guard self != nil, !players.contains(where: { $0.isChannelPanelVisible || $0.isWatchingChannel }) else { return }
+            for player in players {
+                player.liveTV.ring = []
+                player.channelPanel.clear()
+            }
             ChannelStore.shared.unload()
             ChannelLogoLoader.shared.purgeMemory()
             PlaybackEngine.releaseFreeMemory(after: 0.5)

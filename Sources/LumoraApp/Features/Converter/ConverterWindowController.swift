@@ -41,6 +41,8 @@ private final class ConverterViewController: NSViewController {
     private let statusField = NSTextField(labelWithString: "")
     private let convertButton = NSButton(title: "Convert", target: nil, action: nil)
     private let revealButton = NSButton(title: "Show in Finder", target: nil, action: nil)
+    /// The last file written, for Show in Finder (the destination moves on to a new name).
+    private var lastSaved: URL?
 
     private static let descriptions: [String: String] = [
         "h264": "Plays everywhere: Macs, iPhones, TVs and browsers. Good quality, medium size.",
@@ -242,10 +244,16 @@ private final class ConverterViewController: NSViewController {
                 NSApp.requestUserAttention(.informationalRequest)
             }
             if let message {
-                statusField.stringValue = message.contains("cancel") ? "Cancelled." : "Couldn't convert: \(message)"
+                statusField.stringValue = message == ConverterService.cancelMessage ? message : "Couldn't convert: \(message)"
             } else {
                 statusField.stringValue = "Saved \(destination.lastPathComponent)."
+                lastSaved = destination
                 revealButton.isHidden = false
+            }
+            // Converting again must not collide with the file just written (ffmpeg runs with -n).
+            if !destinationConfirmed, let current = self.source {
+                self.destination = ConverterService.outputURL(for: current, preset: preset)
+                updateOutputLabel()
             }
         }
     }
@@ -286,8 +294,8 @@ private final class ConverterViewController: NSViewController {
     }
 
     @objc private func reveal(_ sender: Any?) {
-        guard let destination else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([destination])
+        guard let file = lastSaved ?? destination else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([file])
     }
 }
 

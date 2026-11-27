@@ -11,6 +11,8 @@ enum ConverterService {
         ConvertPreset(id: "audio-aac", title: "Audio AAC M4A", arguments: ["-vn", "-c:a", "aac", "-b:a", "192k"])
     ]
 
+    static let cancelMessage = "Cancelled."
+
     static func outputURL(for input: URL, preset: ConvertPreset) -> URL {
         let ext: String
         switch preset.id {
@@ -34,8 +36,17 @@ enum ConverterService {
     nonisolated(unsafe) private(set) static var activeProcess: Process?
     private static let processLock = NSLock()
 
+    /// Set by cancelActive(); ffmpeg exits normally (status 255) on SIGTERM, so the exit
+    /// reason alone can't tell a cancel from a failure.
+    nonisolated(unsafe) private static var cancelRequested = false
+
     static func cancelActive() {
-        let process = processLock.withLock { activeProcess }
+        let process = processLock.withLock {
+            if activeProcess != nil {
+                cancelRequested = true
+            }
+            return activeProcess
+        }
         process?.terminate()
     }
 
@@ -75,6 +86,9 @@ enum ConverterService {
                 guard let update = state.appendProgress(handle.availableData), let progress else { return }
                 DispatchQueue.main.async { MainActor.assumeIsolated { progress(update) } }
             }
+            // With -n an existing file makes ffmpeg stop; never delete a file that was there before.
+            let outputExisted = FileManager.default.fileExists(atPath: output.path)
+            processLock.withLock { cancelRequested = false }
             do {
                 try process.run()
             } catch {
@@ -89,9 +103,13 @@ enum ConverterService {
             if process.terminationStatus == 0 {
                 return nil
             }
-            if process.terminationReason == .uncaughtSignal {
+            // Don't leave a half-written file behind after a cancel or a failure.
+            if !outputExisted || overwrite {
                 try? FileManager.default.removeItem(at: output)
-                return "Cancelled."
+            }
+            let cancelled = processLock.withLock { cancelRequested }
+            if cancelled || process.terminationReason == .uncaughtSignal {
+                return cancelMessage
             }
             let message = state.errorText
             if !message.isEmpty {

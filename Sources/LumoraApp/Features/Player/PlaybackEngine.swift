@@ -67,11 +67,13 @@ final class PlaybackEngine: ObservableObject {
     private(set) var renderer: VideoRenderer
     private var voConfigured = false
     private var pendingOpenGLSwitch = false
+    /// The view mpv renders into (Metal); held until mpv is destroyed.
+    private var videoHost: NSView?
     private var suspendedVideoID: Int?
     var isVideoSuspended: Bool { suspendedVideoID != nil }
     var onRendererFailure: (() -> Void)?
     private var pendingLoad: [String]?
-    private var isAtEnd = false
+    private(set) var isAtEnd = false
     private var nextReplyID: UInt64 = 100
     private final class PropertyBatch {
         var values: [String: String] = [:]
@@ -252,6 +254,8 @@ final class PlaybackEngine: ObservableObject {
         let address = UInt(bitPattern: handle)
         let box = Unmanaged.passUnretained(wakeupBox)
         let release = UInt(bitPattern: box.toOpaque())
+        let host = videoHost
+        videoHost = nil
         // Tearing down the Metal output hops to the main thread, so never block it here.
         DispatchQueue.global(qos: .userInitiated).async {
             if let handle = OpaquePointer(bitPattern: address) {
@@ -262,6 +266,7 @@ final class PlaybackEngine: ObservableObject {
             }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    withExtendedLifetime(host) {}
                     PlaybackEngine.pendingShutdowns -= 1
                     if PlaybackEngine.pendingShutdowns == 0 {
                         NotificationCenter.default.post(name: .lumoraEnginesStopped, object: nil)
@@ -273,7 +278,11 @@ final class PlaybackEngine: ObservableObject {
 
     /// Metal: hand mpv the view it should render into. Must happen before the first file loads.
     func attachVideoHost(_ view: NSView) {
-        guard renderer == .metal else { return }
+        guard renderer == .metal, videoHost == nil else { return }
+        // mpv reads this pointer on the main thread whenever its output reconfigures, which can
+        // still happen while the engine shuts down after the window closed. Keep the view alive
+        // until mpv is destroyed (released in shutdown()).
+        videoHost = view
         let address = Int(bitPattern: Unmanaged.passUnretained(view).toOpaque())
         setProperty("wid", String(address))
         renderContextReady()
@@ -1048,7 +1057,8 @@ final class PlaybackEngine: ObservableObject {
                 print("[mpv] [\(prefix)] \(line.trimmingCharacters(in: .whitespacesAndNewlines))")
             }
         #endif
-        guard renderer == .metal, !pendingOpenGLSwitch else { return }
+        // During PiP the output is libmpv (software); its errors say nothing about Metal.
+        guard renderer == .metal, !pendingOpenGLSwitch, !isSoftwareOutput else { return }
         if line.contains("selected video_out") || line.contains("suitable GPU context") {
             SessionLog.recordRendererFallback(reason: "[\(prefix)] \(line.trimmingCharacters(in: .whitespacesAndNewlines))")
             onRendererFailure?()

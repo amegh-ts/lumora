@@ -818,13 +818,20 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
         }
         let name = upcoming.item?.title
         let playNext: () -> Void = { [weak self] in self?.windowController?.playNext(auto: true) }
+        // The countdown only moves on if the file is still sitting at its end: Stop, a seek back
+        // or opening something else in the meantime cancels it.
+        let finishedURL = item.url
+        let autoNext: () -> Void = { [weak self] in
+            guard let self, self.engine.isAtEnd, self.engine.currentItem?.url == finishedURL else { return }
+            playNext()
+        }
         toast.countdown(
             seconds: 5, title: { "Up next in \($0)" }, detail: name ?? "A random item (shuffle)", symbol: "forward.end.fill",
             actions: [
                 PlayerToast.Action(title: "Cancel") { [weak self] in self?.osd.show("Autoplay cancelled", symbol: "stop.fill") },
                 PlayerToast.Action(title: "Play Now", primary: true, handler: playNext)
             ],
-            finish: playNext)
+            finish: autoNext)
     }
 
     /// Shown after a file resumes where it was left: one click goes back to the start.
@@ -1460,6 +1467,7 @@ final class PlayerViewController: NSViewController, PlayerRootViewDelegate, Play
     }
 
     @objc func stopPlayback(_ sender: Any?) {
+        toast.dismiss()
         saveProgress(force: true)
         engine.stop()
     }
